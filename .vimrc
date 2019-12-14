@@ -217,41 +217,28 @@ if executable('clang-format')
   augroup END
 endif
 
-" golsp
-" if executable('golsp')
+" let g:lsp_async_completion = 1
+" if executable('gopls')
 "   augroup LspGo
 "     au!
 "     autocmd User lsp_setup call lsp#register_server({
 "         \ 'name': 'go-lang',
-"         \ 'cmd': {server_info->['golsp', '-mode', 'stdio']},
+"         \ 'cmd': {server_info->['gopls']},
 "         \ 'whitelist': ['go'],
+"         \ 'workspace_config': {'gopls': {
+"         \     'completeUnimported': v:true,
+"         \     'caseSensitiveCompletion': v:true,
+"         \     'usePlaceholders': v:true,
+"         \     'completionDocumentation': v:true,
+"         \     'watchFileChanges': v:true,
+"         \     'hoverKind': 'SingleLine',
+"         \   }},
 "         \ })
 "     autocmd FileType go setlocal omnifunc=lsp#complete
+"     autocmd FileType go nmap <buffer> gd <plug>(lsp-definition)
+"     autocmd FileType go nmap <buffer> ,n <plug>(lsp-next-error)
+"     autocmd FileType go nmap <buffer> ,p <plug>(lsp-previous-error)
 "   augroup END
 " endif
-
-let g:lsp_async_completion = 1
-if executable('gopls')
-  augroup LspGo
-    au!
-    autocmd User lsp_setup call lsp#register_server({
-        \ 'name': 'go-lang',
-        \ 'cmd': {server_info->['gopls']},
-        \ 'whitelist': ['go'],
-        \ 'workspace_config': {'gopls': {
-        \     'completeUnimported': v:true,
-        \     'caseSensitiveCompletion': v:true,
-        \     'usePlaceholders': v:true,
-        \     'completionDocumentation': v:true,
-        \     'watchFileChanges': v:true,
-        \     'hoverKind': 'SingleLine',
-        \   }},
-        \ })
-    autocmd FileType go setlocal omnifunc=lsp#complete
-    autocmd FileType go nmap <buffer> gd <plug>(lsp-definition)
-    autocmd FileType go nmap <buffer> ,n <plug>(lsp-next-error)
-    autocmd FileType go nmap <buffer> ,p <plug>(lsp-previous-error)
-  augroup END
-endif
 
 syntax off

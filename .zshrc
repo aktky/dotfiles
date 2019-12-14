@@ -17,6 +17,8 @@ eval "$(direnv hook zsh)"
 export PATH=/usr/local/bin:$PATH
 export PROMPT='%~ %# '
 
+setopt nonomatch
+
 # Aliases
 alias g="git"
 alias gch="git checkout"

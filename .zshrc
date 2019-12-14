@@ -16,3 +16,17 @@ eval "$(direnv hook zsh)"
 # General
 export PATH=/usr/local/bin:$PATH
 export PROMPT='%~ %# '
+
+# Aliases
+alias g="git"
+alias gch="git checkout"
+alias gsw="git switch"
+alias ga="git add"
+alias gcm="git commit -m"
+alias gb="git branch"
+alias gpl="git pull"
+alias gps="git push"
+
+# 補完
+autoload -U compinit
+compinit -u

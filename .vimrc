@@ -1,6 +1,7 @@
 " General
 " 言語設定
 language C
+
 " 文字コードをUFT-8に設定
 set fenc=utf-8
 " バックアップファイルを作らない
@@ -37,24 +38,24 @@ set wildmenu
 " 括弧入力時の対応する括弧を表示
 set showmatch
 " 現在の行を強調表示
-set cursorline
+" set cursorline
 " コマンドラインの補完
 set wildmode=list:longest
 " 折り返し時に表示行単位での移動できるようにする
 nnoremap j gj
 nnoremap k gk
 " カラースキーム
-autocmd ColorScheme * highlight Comment ctermfg=15
-autocmd ColorScheme * highlight Todo term=standout ctermfg=17 ctermbg=7 guifg=Blue guibg=Yellow
-colorscheme delek
-syntax enable
+" autocmd ColorScheme * highlight Comment ctermfg=15
+" autocmd ColorScheme * highlight Todo term=standout ctermfg=17 ctermbg=7 guifg=Blue guibg=Yellow
+" colorscheme default
+" syntax enable
 " ウィンドウの幅より長い行は折り返され、次の行に続けて表示される
 set wrap
 " 補完の色設定
-hi Pmenu ctermbg=4
-hi PmenuSel ctermbg=2
-hi PmenuSbar ctermbg=2
-hi PmenuThumb ctermfg=3
+" hi Pmenu ctermbg=4
+" hi PmenuSel ctermbg=2
+" hi PmenuSbar ctermbg=2
+" hi PmenuThumb ctermfg=3
 
 
 " Indent
@@ -144,7 +145,7 @@ Plug 'SirVer/ultisnips'
 " Rails
 Plug 'tpope/vim-rails'
 " NERDTree
-Plug 'scrooloose/nerdtree'
+" Plug 'scrooloose/nerdtree'
 " Terraform
 Plug 'hashivim/vim-terraform'
 " C++
@@ -238,7 +239,6 @@ if executable('gopls')
         \ 'cmd': {server_info->['gopls']},
         \ 'whitelist': ['go'],
         \ 'workspace_config': {'gopls': {
-        \     'staticcheck': v:true,
         \     'completeUnimported': v:true,
         \     'caseSensitiveCompletion': v:true,
         \     'usePlaceholders': v:true,
@@ -253,3 +253,5 @@ if executable('gopls')
     autocmd FileType go nmap <buffer> ,p <plug>(lsp-previous-error)
   augroup END
 endif
+
+syntax off

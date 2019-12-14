@@ -3,5 +3,5 @@
         email = akatsuki.lvp.fc@me.com
 
 [core]
-        excludefile = /Users/aktky/dotfiles/.gitignore_global
+        excludefile = /Users/aktky/.gitignore_global
         trustctime = false

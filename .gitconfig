@@ -1,0 +1,7 @@
+[user]
+        name = aktky
+        email = akatsuki.lvp.fc@me.com
+
+[core]
+        excludefile = /Users/aktky/dotfiles/.gitignore_global
+        trustctime = false

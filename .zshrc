@@ -34,6 +34,11 @@ alias kgp="kubectl get pods"
 alias kgs="kubectl get svc"
 alias kgi="kubectl get ing"
 
+alias dc="docker-compose"
+alias dcup="docker-compose up"
+alias dcrm="docker-compose rm"
+alias dcps="docker-compose ps"
+
 # 補完
 autoload -U compinit
 compinit -u

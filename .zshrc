@@ -29,6 +29,11 @@ alias gps="git push"
 alias gst="git status"
 alias gdf="git diff"
 
+alias k="kubectl"
+alias kgp="kubectl get pods"
+alias kgs="kubectl get svc"
+alias kgi="kubectl get ing"
+
 # 補完
 autoload -U compinit
 compinit -u

@@ -26,6 +26,8 @@ alias gcm="git commit -m"
 alias gb="git branch"
 alias gpl="git pull"
 alias gps="git push"
+alias gst="git status"
+alias gdf="git diff"
 
 # 補完
 autoload -U compinit

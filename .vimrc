@@ -38,7 +38,7 @@ set wildmenu
 " 括弧入力時の対応する括弧を表示
 set showmatch
 " 現在の行を強調表示
-" set cursorline
+set cursorline
 " コマンドラインの補完
 set wildmode=list:longest
 " 折り返し時に表示行単位での移動できるようにする

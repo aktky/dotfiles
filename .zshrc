@@ -41,6 +41,8 @@ alias dcup="docker-compose up"
 alias dcrm="docker-compose rm"
 alias dcps="docker-compose ps"
 
+alias da="direnv allow"
+
 # 補完
 autoload -U compinit
 compinit -u

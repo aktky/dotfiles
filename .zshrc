@@ -44,6 +44,8 @@ alias dcps="docker-compose ps"
 # 補完
 autoload -U compinit
 compinit -u
+# 補完で大文字・小文字を区別しない
+zstyle ':completion:*' matcher-list 'm:{a-z}={A-Z}'
 
 # The next line updates PATH for the Google Cloud SDK.
 if [ -f '/Users/aktky/google-cloud-sdk/path.zsh.inc' ]; then . '/Users/aktky/google-cloud-sdk/path.zsh.inc'; fi

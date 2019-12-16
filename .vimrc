@@ -29,7 +29,7 @@ set fileformats=unix,dos,mac
 " □や○文字が崩れる問題を解決
 set ambiwidth=double
 " NERDTreeでdotfilesを表示する
-let NERDTreeShowHidden=1
+" let NERDTreeShowHidden=1
 
 set nocompatible
 set wildmenu
@@ -38,7 +38,7 @@ set wildmenu
 " 括弧入力時の対応する括弧を表示
 set showmatch
 " 現在の行を強調表示
-set cursorline
+" set cursorline
 " コマンドラインの補完
 set wildmode=list:longest
 " 折り返し時に表示行単位での移動できるようにする
@@ -120,7 +120,6 @@ nmap <Esc><Esc> :nohlsearch<CR><Esc>
 " Goで保存時にいろいろ実行する
 let g:go_fmt_command = "goimports"
 let g:go_metalinter_autosave = 1
-" let g:go_metalinter_autosave_enabled = ['vet']
 
 " Dartで保存時にformatする
 function! _DartFmt()

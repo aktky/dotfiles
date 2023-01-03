@@ -3,15 +3,24 @@ export GOPATH=$HOME/go
 export GOBIN=$GOPATH/bin
 export PATH=$PATH:$GOPATH/bin
 export GO111MODULE=on
+export PATH=$PATH:/usr/local/go/bin
 
-# goenv
-export PATH=$HOME/.goenv/bin:$PATH
-export GOENV_DISABLE_GOPATH=1
-eval "$(goenv init -)"
+# Homebrew
+eval "$(/opt/homebrew/bin/brew shellenv)"
 
-# direnv
-export EDITOR=vim
-eval "$(direnv hook zsh)"
+# fnm
+eval "$(fnm env --use-on-cd)"
+
+
+# Flutter
+export PATH="$PATH:$HOME/development/flutter/bin"
+
+# pyenv
+export PYENV_ROOT=${HOME}/.pyenv
+if [ -d "${PYENV_ROOT}" ]; then
+    export PATH=${PYENV_ROOT}/bin:$PATH
+    eval "$(pyenv init -)"
+fi
 
 # General
 export PATH=/usr/local/bin:$PATH
@@ -38,15 +47,18 @@ alias kgi="kubectl get ing"
 
 alias dc="docker-compose"
 alias dcup="docker-compose up"
-alias dcrm="docker-compose rm"
+alias dcrun="docker-compose run"
 alias dcps="docker-compose ps"
+alias dim="docker images"
 
-alias da="direnv allow"
+alias reload="exec $SHELL -l"
 
-# 補完
+alias ssh-add-id-rsa="ssh-add ~/.ssh/id_rsa"
+
+alias ngrok="~/dev/ngrok/ngrok"
+
 autoload -U compinit
 compinit -u
-# 補完で大文字・小文字を区別しない
 zstyle ':completion:*' matcher-list 'm:{a-z}={A-Z}'
 
 # The next line updates PATH for the Google Cloud SDK.

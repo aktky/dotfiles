@@ -5,22 +5,25 @@ export PATH=$PATH:$GOPATH/bin
 export GO111MODULE=on
 export PATH=$PATH:/usr/local/go/bin
 
-# Homebrew
-eval "$(/opt/homebrew/bin/brew shellenv)"
+# Zig
+export PATH="$HOME/dev/github.com/zigtools/zls/zig-out/bin:$PATH"
 
-# fnm
-eval "$(fnm env --use-on-cd)"
+# Added by Windsurf
+export PATH="/Users/aktky/.codeium/windsurf/bin:$PATH"
 
+# Added by LM Studio CLI (lms)
+export PATH="$PATH:/Users/aktky/.lmstudio/bin"
+# End of LM Studio CLI section
 
-# Flutter
-export PATH="$PATH:$HOME/development/flutter/bin"
+# Created by `pipx` on 2025-03-24 07:56:58
+export PATH="$PATH:/Users/aktky/.local/bin"
 
-# pyenv
-export PYENV_ROOT=${HOME}/.pyenv
-if [ -d "${PYENV_ROOT}" ]; then
-    export PATH=${PYENV_ROOT}/bin:$PATH
-    eval "$(pyenv init -)"
-fi
+# bun completions
+[ -s "/Users/aktky/.bun/_bun" ] && source "/Users/aktky/.bun/_bun"
+
+# bun
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
 
 # General
 export PATH=/usr/local/bin:$PATH
@@ -45,24 +48,18 @@ alias kgp="kubectl get pods"
 alias kgs="kubectl get svc"
 alias kgi="kubectl get ing"
 
-alias dc="docker-compose"
-alias dcup="docker-compose up"
-alias dcrun="docker-compose run"
-alias dcps="docker-compose ps"
+alias dc="docker compose"
+alias dcup="docker compose up"
+alias dcrun="docker compose run"
+alias dcps="docker compose ps"
 alias dim="docker images"
 
 alias reload="exec $SHELL -l"
 
 alias ssh-add-id-rsa="ssh-add ~/.ssh/id_rsa"
 
-alias ngrok="~/dev/ngrok/ngrok"
+alias jq_tr_cntrl='(){ echo "$1" | tr -d '[:cntrl:]' | jq . }'
 
 autoload -U compinit
 compinit -u
 zstyle ':completion:*' matcher-list 'm:{a-z}={A-Z}'
-
-# The next line updates PATH for the Google Cloud SDK.
-if [ -f '/Users/aktky/google-cloud-sdk/path.zsh.inc' ]; then . '/Users/aktky/google-cloud-sdk/path.zsh.inc'; fi
-
-# The next line enables shell command completion for gcloud.
-if [ -f '/Users/aktky/google-cloud-sdk/completion.zsh.inc' ]; then . '/Users/aktky/google-cloud-sdk/completion.zsh.inc'; fi

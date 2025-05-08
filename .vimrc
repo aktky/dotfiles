@@ -61,14 +61,12 @@ autocmd FileType md          setlocal sw=2 sts=2 ts=2 et
 autocmd FileType er          setlocal sw=2 sts=2 ts=2 et
 autocmd FileType proto       setlocal sw=2 sts=2 ts=2 et
 
-
 set ignorecase
 set smartcase
 set incsearch
 set wrapscan
 set hlsearch
 nmap <Esc><Esc> :nohlsearch<CR><Esc>
-
 
 " Plugins
 " :PlugInstall
@@ -82,29 +80,11 @@ Plug 'mattn/vim-lsp-settings'
 Plug 'mattn/vim-goimports'
 " StatsuLine
 Plug 'itchyny/lightline.vim'
-" Rails
-Plug 'tpope/vim-rails'
-" NERDTree
-" Plug 'scrooloose/nerdtree'
-" Terraform
 Plug 'hashivim/vim-terraform'
-" C++
-Plug 'vim-jp/cpp-vim'
-Plug 'justmao945/vim-clang'
-" Kotlin
-Plug 'udalov/kotlin-vim'
-" Dart
-Plug 'dart-lang/dart-vim-plugin'
-Plug 'natebosch/vim-lsc'
-Plug 'natebosch/vim-lsc-dart'
-" Flutter
-Plug 'thosakwe/vim-flutter'
-" Theme
-Plug 'fxn/vim-monochrome'
-Plug 'davidcelis/vim-ariake-dark'
 call plug#end()
 
 autocmd BufWritePre *.{yml,yaml,py,rb,go,js,ts} :%s/\s\+$//e
+autocmd BufWritePre <buffer> LspDocumentFormatSync
 autocmd BufNewFile,BufRead *.{html,htm,erb,slim,jsx,tsx,vue*} set filetype=html
 
 set statusline=%F
@@ -117,12 +97,6 @@ set statusline+=[ENC=%{&fileencoding}]
 set statusline+=[LOW=%l/%L]
 set laststatus=2
 
-
-" Aliases
-" :command NT NERDTree
-:command LDD LspDocumentDiagnostics
-
-" Dart
 " Use all the defaults (recommended):
 let g:lsc_auto_map = v:true
 
@@ -157,18 +131,9 @@ let g:terraform_remap_spacebar=1
 let g:terraform_commentstring='//%s'
 let g:terraform_fmt_on_save=1
 
-" Clang
-function! s:clang_format()
-  let now_line = line(".")
-  exec ":%! clang-format -style=Google"
-  exec ":" . now_line
-endfunction
-
-if executable('clang-format')
-  augroup cpp_clang_format
-    autocmd!
-    autocmd BufWrite,FileWritePre,FileAppendPre *.[ch]pp call s:clang_format()
-  augroup END
-endif
+" Markdown
+let g:mkdp_auto_start = 1
+let g:mkdp_auto_close = 1
+let g:mkdp_theme = 'light'
 
 syntax off

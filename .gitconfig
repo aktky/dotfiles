@@ -1,7 +1,23 @@
 [user]
-        name = aktky
-        email = aktky4d@gmail.com
-
+        name =  aktky
+        email = theaktky@gmail.com
+        signingkey = /Users/aktky/.ssh/id_ed25519_gh_sign.pub
 [core]
-        excludefile = /Users/aktky/.gitignore_global
-        trustctime = false
+        excludesfile = /Users/aktky/dotfiles/.gitignore
+        trustctime   = false
+[filter "lfs"]
+        clean = git-lfs clean -- %f
+        smudge = git-lfs smudge -- %f
+        process = git-lfs filter-process
+        required = true
+[pull]
+        rebase = true
+        ff     = only
+[merge]
+        ff = only
+[gpg]
+        format = ssh
+[commit]
+        gpgsign = true
+[rebase]
+        autosquash = true

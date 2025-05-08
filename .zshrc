@@ -18,6 +18,9 @@ export PATH="$PATH:/Users/aktky/.lmstudio/bin"
 # Created by `pipx` on 2025-03-24 07:56:58
 export PATH="$PATH:/Users/aktky/.local/bin"
 
+# fnm
+eval "$(fnm env --use-on-cd --shell zsh)"
+
 # bun completions
 [ -s "/Users/aktky/.bun/_bun" ] && source "/Users/aktky/.bun/_bun"
 

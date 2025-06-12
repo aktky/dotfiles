@@ -83,8 +83,12 @@ Plug 'itchyny/lightline.vim'
 Plug 'hashivim/vim-terraform'
 call plug#end()
 
+" LSP settings - suppress formatting messages
+let g:lsp_log_verbose = 0
+let g:lsp_log_file = ''
+
 autocmd BufWritePre *.{yml,yaml,py,rb,go,js,ts} :%s/\s\+$//e
-autocmd BufWritePre <buffer> LspDocumentFormatSync
+autocmd BufWritePre <buffer> silent! LspDocumentFormatSync
 autocmd BufNewFile,BufRead *.{html,htm,erb,slim,jsx,tsx,vue*} set filetype=html
 
 set statusline=%F

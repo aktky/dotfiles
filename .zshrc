@@ -28,6 +28,9 @@ eval "$(fnm env --use-on-cd --shell zsh)"
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 
+# pyenv
+eval "$(pyenv init -)"
+
 # General
 export PATH=/usr/local/bin:$PATH
 export PROMPT='%~ %# '

@@ -1,3 +1,8 @@
+# General
+export PATH=/usr/local/bin:$PATH
+export PATH="$HOME/.local/bin:$PATH"
+export PROMPT='%~ %# '
+
 # Go
 export GOPATH=$HOME/go
 export GOBIN=$GOPATH/bin
@@ -28,12 +33,22 @@ eval "$(fnm env --use-on-cd --shell zsh)"
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 
+# MySQL
+export PATH="/opt/homebrew/opt/mysql-client/bin:$PATH"
+
 # pyenv
 eval "$(pyenv init -)"
 
-# General
-export PATH=/usr/local/bin:$PATH
-export PROMPT='%~ %# '
+# bun completions
+[ -s "/Users/aktky/.bun/_bun" ] && source "/Users/aktky/.bun/_bun"
+
+# Added by LM Studio CLI (lms)
+export PATH="$PATH:/Users/aktky/.lmstudio/bin"
+# End of LM Studio CLI section
+
+# Added by LM Studio CLI (lms)
+export PATH="$PATH:/Users/aktky/.lmstudio/bin"
+# End of LM Studio CLI section
 
 setopt nonomatch
 

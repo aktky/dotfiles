@@ -1,0 +1,40 @@
+#!/bin/bash
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+links_only=false
+custom_home=false
+strict=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --links-only) links_only=true; shift ;;
+    --strict) strict=true; shift ;;
+    --target-home) [[ $# -ge 2 ]] || exit 2; target_home="$2"; custom_home=true; shift 2 ;;
+    --help) echo "Usage: $0 [--strict] [--links-only] [--target-home DIR]"; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+if $custom_home && ! $links_only; then echo '--target-home requires --links-only.' >&2; exit 2; fi
+normalize_target
+status=0
+while IFS='|' read -r src rel; do
+  dest="$target_home/$rel"
+  if [[ -L "$dest" && "$(readlink "$dest")" == "$repo_root/$src" && -e "$dest" ]]; then
+    printf 'OK link: %s\n' "$rel"
+  else
+    printf 'MISSING/DIFFERENT link: %s\n' "$rel"; status=1
+  fi
+done < <(links)
+if $links_only; then exit "$status"; fi
+check_packages
+for tool in git tmux rg jq op; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    printf 'PATH %s: %s\n' "$tool" "$(command -v "$tool")"
+  else
+    printf 'MISSING on PATH: %s\n' "$tool"; status=1
+  fi
+done
+if ! git config --get user.name >/dev/null || ! git config --get user.email >/dev/null; then
+  echo 'MISSING Git identity: see config/git/config.local.example'; status=1
+fi
+printf 'Git commit signing: %s\n' "$(git config --get commit.gpgsign || echo 'not enabled')"
+exit "$status"

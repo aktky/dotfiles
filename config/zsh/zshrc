@@ -1,0 +1,4 @@
+typeset -U path PATH
+[[ -d "$HOME/.local/bin" ]] && path=("$HOME/.local/bin" $path)
+export EDITOR=vim
+[[ -r "$HOME/.zshrc.local" ]] && source "$HOME/.zshrc.local"

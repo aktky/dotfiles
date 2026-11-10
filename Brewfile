@@ -1,0 +1,5 @@
+brew "git"
+brew "tmux"
+brew "ripgrep"
+brew "jq"
+cask "1password-cli"

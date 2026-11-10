@@ -17,7 +17,12 @@ separate worktree for review. To undo, remove only this repo's links and restore
 ## Tools
 
 - Shared tools: edit `Brewfile`, preview, apply, then run doctor.
-- AI CLIs: use the vendor's installer/updater; bootstrap does not install these yet.
+- AI CLIs: `./scripts/install-ai` previews; `./scripts/install-ai --apply` installs
+  Claude, Codex, Grok and Cursor through their official installers. Pass names to
+  select a subset. Sign in through each CLI; credentials stay outside this repo.
+- Updates: `claude update`, `grok update`, `cursor-agent update`; for Codex,
+  rerun `./scripts/install-ai --apply codex`. Keep vendor auto-updates enabled.
+  Use `grok` and `cursor-agent`, not the ambiguous `agent` command.
 - Project runtimes and dependencies: keep declarations and lockfiles in that project.
 
 Apply uses `brew bundle install --no-upgrade`; explicit updates use
@@ -63,6 +68,6 @@ Desktop integration uses your account permissions, not per-project restrictions.
 
 ```sh
 python3 tests/test_bootstrap.py
-bash -n scripts/common.sh scripts/bootstrap scripts/doctor scripts/check-1password
+bash -n scripts/common.sh scripts/bootstrap scripts/doctor scripts/check-1password scripts/install-ai
 zsh -n config/zsh/zprofile config/zsh/zshrc
 ```

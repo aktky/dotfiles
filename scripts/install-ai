@@ -1,0 +1,31 @@
+#!/bin/bash
+set -euo pipefail
+apply=false
+if [[ "${1:-}" == --apply ]]; then apply=true; shift; fi
+if [[ $# == 0 ]]; then set -- claude codex grok cursor; fi
+for tool in "$@"; do
+  case "$tool" in
+    claude|codex|grok|cursor) ;;
+    *) echo "Usage: $0 [--apply] [claude|codex|grok|cursor ...]" >&2; exit 2 ;;
+  esac
+done
+installer=""
+trap '[[ -z "$installer" ]] || rm -f "$installer"' EXIT
+for tool in "$@"; do
+  shell=/bin/bash
+  case "$tool" in
+    claude) url=https://claude.ai/install.sh ;;
+    codex) url=https://chatgpt.com/codex/install.sh; shell=/bin/sh ;;
+    grok) url=https://x.ai/cli/install.sh ;;
+    cursor) url=https://cursor.com/install ;;
+  esac
+  printf '%s: %s\n' "$tool" "$url"
+  if ! $apply; then continue; fi
+  installer="$(mktemp)"
+  curl -fsSL "$url" -o "$installer"
+  # Use a predictable PATH; dotfiles owns shell setup, including Grok's PATH.
+  PATH="$HOME/.local/bin:$HOME/.grok/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" SHELL=/bin/sh "$shell" "$installer" </dev/null
+  rm -f "$installer"
+  installer=""
+done
+if ! $apply; then echo 'Preview only. Use --apply to install.'; fi

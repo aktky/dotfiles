@@ -11,7 +11,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Shell syntax
         run: |
-          bash -n scripts/common.sh scripts/bootstrap scripts/doctor scripts/check-1password
+          bash -n scripts/common.sh scripts/bootstrap scripts/doctor scripts/check-1password scripts/install-ai
           zsh -n config/zsh/zprofile config/zsh/zshrc
       - name: Temporary-home integration tests
         run: python3 tests/test_bootstrap.py

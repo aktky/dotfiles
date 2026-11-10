@@ -152,6 +152,28 @@ esac
         self.assertNotIn("signin", log.read_text())
         self.assertNotIn("test-placeholder", result.stdout + result.stderr)
 
+    def test_ai_install_is_explicit_and_validates_all_names(self):
+        bindir = self.base / "bin"
+        bindir.mkdir()
+        log = self.base / "downloads"
+        curl = bindir / "curl"
+        curl.write_text("#!/bin/bash\necho called >> \"$DOTFILES_TEST_LOG\"\nexit 91\n")
+        curl.chmod(0o755)
+        env = dict(os.environ, PATH=str(bindir) + os.pathsep + os.defpath,
+                   DOTFILES_TEST_LOG=str(log))
+        command = [str(self.repo / "scripts/install-ai")]
+        result = subprocess.run(command, env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(log.exists())
+        result = subprocess.run(command + ["--apply", "claude", "unknown"],
+                                env=env, capture_output=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(log.exists())
+        result = subprocess.run(command + ["--apply", "claude", "grok"],
+                                env=env, capture_output=True)
+        self.assertEqual(result.returncode, 91)
+        self.assertEqual(log.read_text().splitlines(), ["called"])
+
     def test_custom_home_cannot_install_packages(self):
         result = subprocess.run(
             [str(self.repo / "scripts/bootstrap"), "--apply",

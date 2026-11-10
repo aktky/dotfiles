@@ -3,3 +3,5 @@ if [[ -x /opt/homebrew/bin/brew ]]; then
 elif [[ -x /usr/local/bin/brew ]]; then
   eval "$(/usr/local/bin/brew shellenv)"
 fi
+typeset -U path PATH
+path=("$HOME/.local/bin" "$HOME/.grok/bin" $path)

@@ -1,0 +1,17 @@
+name: Check
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: |
+          bash -n scripts/common.sh scripts/bootstrap scripts/doctor scripts/check-1password
+          zsh -n config/zsh/zprofile config/zsh/zshrc
+      - name: Temporary-home integration tests
+        run: python3 tests/test_bootstrap.py

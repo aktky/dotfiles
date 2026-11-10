@@ -1,0 +1,53 @@
+#!/bin/bash
+set -euo pipefail
+source "$(dirname "$0")/common.sh"
+apply=false
+links_only=false
+custom_home=false
+usage() { echo "Usage: $0 [--apply] [--links-only] [--target-home DIR]"; }
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --apply) apply=true; shift ;;
+    --links-only) links_only=true; shift ;;
+    --target-home) [[ $# -ge 2 ]] || { usage; exit 2; }; target_home="$2"; custom_home=true; shift 2 ;;
+    --help) usage; exit 0 ;;
+    *) usage; exit 2 ;;
+  esac
+done
+if $custom_home && ! $links_only; then
+  echo '--target-home requires --links-only (Homebrew is machine-wide).' >&2; exit 2
+fi
+normalize_target
+conflicts=0
+while IFS='|' read -r src rel; do
+  dest="$target_home/$rel"
+  if [[ ! -f "$repo_root/$src" ]]; then
+    printf 'MISSING source: %s\n' "$src" >&2; conflicts=1; continue
+  fi
+  if ! check_parent "$dest"; then conflicts=1; continue; fi
+  if [[ -L "$dest" && "$(readlink "$dest")" == "$repo_root/$src" ]]; then
+    printf 'OK link: %s\n' "$dest"
+  elif [[ -e "$dest" || -L "$dest" ]]; then
+    printf 'CONFLICT: %s (back up and move it explicitly first)\n' "$dest" >&2
+    conflicts=1
+  else
+    printf 'LINK: %s -> %s\n' "$dest" "$repo_root/$src"
+  fi
+done < <(links)
+[[ "$conflicts" == 0 ]] || { echo 'Stopped before making any changes.' >&2; exit 1; }
+if ! $links_only; then
+  printf 'PACKAGES: brew bundle install --no-upgrade --file=%s/Brewfile\n' "$repo_root"
+fi
+if ! $apply; then echo 'Preview only. Use --apply to install and link.'; exit 0; fi
+if ! $links_only; then
+  [[ "$(uname -s)" == Darwin ]] || { echo 'Package installation is macOS-only.' >&2; exit 2; }
+  find_brew || { echo 'Install Homebrew from https://brew.sh, then rerun.' >&2; exit 1; }
+  HOMEBREW_NO_AUTO_UPDATE=1 "$brew_bin" bundle install --no-upgrade --file="$repo_root/Brewfile"
+fi
+while IFS='|' read -r src rel; do
+  dest="$target_home/$rel"
+  if [[ -L "$dest" && "$(readlink "$dest")" == "$repo_root/$src" ]]; then continue; fi
+  mkdir -p "$(dirname "$dest")"
+  ln -s "$repo_root/$src" "$dest"
+done < <(links)
+echo 'Applied. Configure local Git identity/signing, then run scripts/doctor.'

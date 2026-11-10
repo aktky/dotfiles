@@ -1,0 +1,11 @@
+[user]
+    name = YOUR_NAME
+    email = YOUR_EMAIL
+    signingkey = ~/.ssh/github-signing.pub
+[gpg]
+    format = ssh
+[gpg "ssh"]
+    program = /Applications/1Password.app/Contents/MacOS/op-ssh-sign
+    allowedSignersFile = ~/.ssh/allowed_signers
+[commit]
+    gpgsign = true

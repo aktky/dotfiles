@@ -1,0 +1,19 @@
+language C
+set encoding=utf-8
+set fileencodings=ucs-bom,utf-8,euc-jp,cp932
+set fileformats=unix,dos
+set autoread
+set hidden
+set backspace=indent,eol,start
+set autoindent
+set expandtab
+set shiftwidth=2
+set softtabstop=2
+set tabstop=2
+set cursorline
+set ignorecase
+set smartcase
+set incsearch
+set hlsearch
+syntax on
+filetype plugin indent on

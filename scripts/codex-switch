@@ -1,0 +1,163 @@
+#!/bin/bash
+# Keep shared Codex settings/history; swap only file-backed ChatGPT credentials.
+set -euo pipefail
+
+usage() {
+  echo 'Usage: codex-switch [NAME [--relogin]]'
+  echo 'List saved accounts, switch to NAME, or sign in again with --relogin.'
+  echo 'Close Codex/ChatGPT and Codex CLI sessions before switching.'
+}
+fail() { printf 'codex-switch: %s\n' "$*" >&2; exit 1; }
+valid_name() { [[ -n "$1" && "$1" != -* && "$1" != *[!A-Za-z0-9_-]* ]]; }
+if [[ $# == 1 && "$1" == --help ]]; then usage; exit 0; fi
+if [[ $# -gt 2 ]] || { [[ $# == 2 ]] && [[ "$2" != --relogin ]]; }; then usage >&2; exit 2; fi
+slot="${1:-}"
+relogin=false
+if [[ $# -gt 0 ]]; then valid_name "$slot" || { usage >&2; exit 2; }; fi
+if [[ $# == 2 ]]; then relogin=true; fi
+command -v jq >/dev/null 2>&1 || fail 'jq is required; install the Brewfile packages.'
+
+codex_home="${CODEX_HOME:-$HOME/.codex}"
+accounts="$codex_home/accounts"
+auth="$codex_home/auth.json"
+marker="$accounts/.current"
+current=""
+read_current() {
+  current=""
+  if [[ -f "$marker" ]]; then
+    current="$(cat "$marker")"
+    valid_name "$current" || fail 'invalid accounts/.current; repair the slot name before switching.'
+  fi
+}
+describe_auth() {
+  jq -er '(.tokens.id_token | split(".")[1] | gsub("-"; "+") | gsub("_"; "/") |
+    @base64d | fromjson) | "\(.email // "unknown"), plan=\(."https://api.openai.com/auth".chatgpt_plan_type // "MISSING")"' \
+    "$1" 2>/dev/null || printf 'unknown\n'
+}
+valid_auth() {
+  jq -e 'type == "object" and
+    ([.tokens.id_token, .tokens.access_token, .tokens.refresh_token] |
+      all(.[]; type == "string" and length > 0))' "$1" >/dev/null 2>&1
+}
+if [[ -z "$slot" ]]; then
+  read_current
+  printf 'current: %s (%s)\n' "${current:-?}" "$(describe_auth "$auth")"
+  shopt -s nullglob
+  for saved in "$accounts"/*.json; do
+    name="${saved##*/}"; name="${name%.json}"
+    valid_name "$name" || continue
+    printf '  %s: %s\n' "$name" "$(describe_auth "$saved")"
+  done
+  exit 0
+fi
+[[ ! -L "$accounts" ]] || fail "refusing a symlink at $accounts"
+command -v pgrep >/dev/null 2>&1 || fail 'pgrep is required to check for running clients.'
+clients_match() {
+  local result
+  if pgrep "$@" >/dev/null 2>&1; then return 0; else result=$?; fi
+  [[ "$result" == 1 ]] || fail 'could not check running clients; refusing to switch.'
+  return 1
+}
+# Clients can keep old credentials in memory and write them back after a switch.
+if clients_match -u "$(id -u)" -f '(^|/)(codex|codex\.js)([[:space:]]|$)|/(Codex|ChatGPT)\.app/Contents/MacOS/' ||
+   clients_match -u "$(id -u)" -x 'codex|Codex|ChatGPT'; then
+  fail 'close Codex/ChatGPT and all Codex CLI/app-server sessions, then retry.'
+fi
+
+umask 077
+mkdir -p "$accounts"
+chmod 700 "$accounts"
+lock="$accounts/.switch.lock"
+mkdir "$lock" 2>/dev/null || fail "another switch or unfinished recovery exists at $lock"
+rollback=false
+committed=false
+write_private() {
+  local temporary
+  temporary="$(mktemp "$lock/write.XXXXXX")" || return
+  cp "$1" "$temporary" && chmod 600 "$temporary" && mv -f "$temporary" "$2"
+}
+snapshot() { if [[ -f "$1" ]]; then cp "$1" "$2"; fi; }
+restore() {
+  if [[ -f "$1" ]]; then write_private "$1" "$2"; else rm -f "$2"; fi
+}
+cleanup() {
+  local result=$? restored=true
+  trap - EXIT HUP INT TERM
+  set +e
+  if $rollback && ! $committed; then
+    restore "$lock/auth.before" "$auth" || restored=false
+    restore "$lock/current.before" "$marker" || restored=false
+    restore "$lock/target.before" "$accounts/$slot.json" || restored=false
+    if [[ -n "$current" && "$current" != "$slot" ]]; then
+      restore "$lock/previous.before" "$accounts/$current.json" || restored=false
+    fi
+  fi
+  if $restored; then
+    rm -rf "$lock"
+  else
+    printf 'codex-switch: restore failed; recovery copies remain in %s\n' "$lock" >&2
+    result=1
+  fi
+  exit "$result"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+# Decide from the state protected by the lock, not an earlier observation.
+read_current
+for path in "$auth" "$marker" "$accounts/$slot.json"; do
+  [[ ! -L "$path" ]] || fail "refusing a symlink at $path"
+  [[ ! -e "$path" || -f "$path" ]] || fail "expected a regular file at $path"
+done
+if [[ -n "$current" ]]; then
+  [[ ! -L "$accounts/$current.json" ]] || fail 'current slot must not be a symlink.'
+  [[ ! -e "$accounts/$current.json" || -f "$accounts/$current.json" ]] || fail 'current slot must be a regular file.'
+fi
+if [[ "$slot" == "$current" ]] && ! $relogin && valid_auth "$auth"; then
+  printf 'already on %s (%s)\n' "$slot" "$(describe_auth "$auth")"
+  exit 0
+fi
+login=false
+if $relogin || [[ ! -f "$accounts/$slot.json" ]]; then
+  login=true
+  command -v codex >/dev/null 2>&1 || fail 'Codex CLI is required; run scripts/install-ai --apply codex.'
+else
+  valid_auth "$accounts/$slot.json" || fail "invalid saved account $slot; use: codex-switch $slot --relogin"
+fi
+snapshot "$auth" "$lock/auth.before"
+snapshot "$marker" "$lock/current.before"
+snapshot "$accounts/$slot.json" "$lock/target.before"
+if [[ -n "$current" && "$current" != "$slot" ]]; then
+  snapshot "$accounts/$current.json" "$lock/previous.before"
+fi
+rollback=true
+
+if $login; then
+  # Removing only the active file makes the CLI perform a fresh browser login.
+  # EXIT/signal cleanup restores it, even on first setup or same-slot relogin.
+  rm -f "$auth"
+  login_args=(-c 'cli_auth_credentials_store="file"')
+  if [[ -s "$accounts/$slot.workspace" ]]; then
+    workspace="$(cat "$accounts/$slot.workspace")"
+    login_args+=(-c "forced_chatgpt_workspace_id=$(jq -cn --arg value "$workspace" '$value')")
+  fi
+  if ! CODEX_HOME="$codex_home" codex "${login_args[@]}" login; then
+    fail 'login failed; previous credentials have been preserved.'
+  fi
+  valid_auth "$auth" || fail 'login did not produce valid file-backed ChatGPT credentials; previous credentials have been preserved.'
+  cp "$auth" "$lock/auth.next"
+else
+  cp "$accounts/$slot.json" "$lock/auth.next"
+fi
+if [[ -n "$current" && "$current" != "$slot" && -f "$lock/auth.before" ]]; then
+  # Save refreshed tokens from the active file instead of an older saved copy.
+  valid_auth "$lock/auth.before" || fail 'active credentials are invalid; refusing to overwrite the current saved account.'
+  write_private "$lock/auth.before" "$accounts/$current.json"
+fi
+write_private "$lock/auth.next" "$accounts/$slot.json"
+write_private "$lock/auth.next" "$auth"
+printf '%s\n' "$slot" > "$lock/current.next"
+write_private "$lock/current.next" "$marker"
+committed=true
+printf 'switched: %s -> %s (%s)\n' "${current:-?}" "$slot" "$(describe_auth "$auth")"

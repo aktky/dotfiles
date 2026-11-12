@@ -41,9 +41,28 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual((self.target / ".gitconfig").resolve(),
                          self.repo / "config/git/config")
         self.assertFalse((self.target / ".config/git/config.local").exists())
+        switch = self.target / ".local/bin/codex-switch"
+        self.assertEqual(switch.resolve(), self.repo / "scripts/codex-switch")
+        self.assertTrue(os.access(switch, os.X_OK))
+        bindir = self.base / "blocked-bin"
+        bindir.mkdir()
+        calls = self.base / "unexpected-commands"
+        for name in ("codex", "pgrep"):
+            stub = bindir / name
+            stub.write_text('#!/bin/bash\necho called >> "$DOTFILES_TEST_LOG"\nexit 91\n')
+            stub.chmod(0o755)
+        env = dict(os.environ, HOME=str(self.target),
+                   CODEX_HOME=str(self.target / ".codex"),
+                   PATH=str(bindir) + os.pathsep + os.defpath,
+                   DOTFILES_TEST_LOG=str(calls))
+        result = subprocess.run([str(switch), "--help"], env=env,
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.target / ".codex").exists())
+        self.assertFalse(calls.exists())
 
     def test_conflict_stops_before_any_links(self):
-        conflict = self.target / ".vimrc"  # Last entry: preflight must cover all.
+        conflict = self.target / ".vimrc"
         conflict.write_text("keep me")
         result = self.run_script("bootstrap", "--apply")
         self.assertNotEqual(result.returncode, 0)
@@ -55,6 +74,27 @@ class BootstrapTests(unittest.TestCase):
         result = self.run_script("bootstrap", "--apply")
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.target / ".zshrc").exists())
+
+    def test_existing_switch_command_blocks_all_links(self):
+        conflict = self.target / ".local/bin/codex-switch"  # Last link entry.
+        conflict.parent.mkdir(parents=True)
+        conflict.write_text("keep existing command")
+        result = self.run_script("bootstrap", "--apply")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(conflict.read_text(), "keep existing command")
+        self.assertFalse((self.target / ".zshrc").exists())
+        self.assertFalse((self.target / ".vimrc").exists())
+
+    def test_symlinked_bin_cannot_redirect_command_install(self):
+        outside = self.base / "outside bin"
+        outside.mkdir()
+        (self.target / ".local").mkdir()
+        (self.target / ".local/bin").symlink_to(outside, target_is_directory=True)
+        result = self.run_script("bootstrap", "--apply")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(list(outside.iterdir()), [])
+        self.assertFalse((self.target / ".zshrc").exists())
+        self.assertFalse((self.target / ".vimrc").exists())
 
     def test_symlinked_parent_cannot_redirect_writes(self):
         outside = self.base / "outside"

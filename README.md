@@ -30,6 +30,42 @@ Apply uses `brew bundle install --no-upgrade`; explicit updates use
 Brewfile does not pin versions. Doctor reports unmanaged Homebrew leaves/casks,
 not every installed tool; `--strict` makes those findings fail the check.
 
+## Codex account switching
+
+On the new Mac, apply bootstrap as shown above, then install Codex and open a new
+login shell:
+
+```sh
+./scripts/install-ai --apply codex
+exec zsh -l
+```
+
+Bootstrap links `codex-switch` into `~/.local/bin`; `jq` is already in `Brewfile`.
+Create `~/.codex/config.toml` if needed and set this key at the top level, before
+any `[section]`. Update an existing key instead of adding a duplicate:
+
+```toml
+cli_auth_credentials_store = "file"
+```
+
+Quit the Codex/ChatGPT desktop app and all Codex CLI/app-server processes before
+switching. The command refuses to switch while clients are running; it does not
+close them for you. Sign in to each account once on the new Mac:
+
+```sh
+codex-switch a            # First use: browser login for account a
+codex-switch b            # First use: browser login for account b
+codex-switch a            # Switch to the saved account
+codex-switch              # Show the current account and saved slots
+codex-switch b --relogin  # Replace an expired login
+```
+
+Reopen the app or CLI after switching. Config, history and plugins stay shared;
+only `auth.json` changes. Credentials and saved slots stay in `~/.codex`, outside
+this repository. If `CODEX_HOME` is set, use that directory for both configuration
+and credentials. Sign in afresh on each Mac rather than copying token files, and
+do not run `codex logout` between switches.
+
 ## 1Password and GitHub
 
 In 1Password Settings → Developer, enable CLI integration and the SSH Agent.
@@ -67,7 +103,10 @@ Desktop integration uses your account permissions, not per-project restrictions.
 ## Check changes
 
 ```sh
-python3 tests/test_bootstrap.py
-bash -n scripts/common.sh scripts/bootstrap scripts/doctor scripts/check-1password scripts/install-ai
-zsh -n config/zsh/zprofile config/zsh/zshrc
+python3 -m unittest discover -s tests
+for script in scripts/*; do bash -n "$script"; done
+for config in config/zsh/*; do zsh -n "$config"; done
 ```
+
+Tests use temporary homes and stubbed login/process checks; they do not install
+packages, use real credentials or switch the current Mac's account.

@@ -24,6 +24,8 @@ separate worktree for review. To undo, remove only this repo's links and restore
   rerun `./scripts/install-ai --apply codex`. Keep vendor auto-updates enabled.
   Use `grok` and `cursor-agent`, not the ambiguous `agent` command.
 - Project runtimes and dependencies: keep declarations and lockfiles in that project.
+  For Python, `uv` is managed in `Brewfile`. Use `uv python install <version>`
+  for the runtime specified by the project, then sync its committed lockfile.
 
 Apply uses `brew bundle install --no-upgrade`; explicit updates use
 `brew bundle upgrade --file=./Brewfile`. Removing entries does not uninstall packages.

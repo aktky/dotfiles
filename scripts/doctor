@@ -26,7 +26,7 @@ while IFS='|' read -r src rel; do
 done < <(links)
 if $links_only; then exit "$status"; fi
 check_packages
-for tool in git tmux rg jq op gh claude codex codex-switch grok cursor-agent; do
+for tool in git tmux rg jq op gh uv claude codex codex-switch grok cursor-agent; do
   if command -v "$tool" >/dev/null 2>&1; then
     printf 'PATH %s: %s\n' "$tool" "$(command -v "$tool")"
   else

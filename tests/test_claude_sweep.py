@@ -259,6 +259,76 @@ class ClaudeSweepTests(unittest.TestCase):
         self.assertIn("REMOVE aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2", result.stdout)
         self.assertNotIn("claude/work", self.branches(repo))
 
+    def squashed_branch(self, name):
+        """A pushed worktree branch that master took as a squash commit, with a
+        master-only fetch refspec so the branch has no remote-tracking ref."""
+        repo = self.project()
+        remote = self.base / "remote.git"
+        self.git(self.base, "init", "-q", "--bare", str(remote))
+        self.git(repo, "remote", "add", "origin", str(remote))
+        self.git(repo, "config", "remote.origin.fetch", "+refs/heads/master:refs/remotes/origin/master")
+        self.git(repo, "push", "-q", "origin", "master")
+        path = self.worktree(repo, name)
+        (path / "feature").write_text(name + "\n")
+        self.git(path, "add", "feature")
+        self.git(path, "commit", "-qm", "feature")
+        self.git(path, "push", "-q", "origin", f"claude/{name}")
+        self.git(repo, "merge", "-q", "--squash", f"claude/{name}")
+        self.git(repo, "commit", "-qm", "feature (#1)")
+        self.git(repo, "push", "-q", "origin", "master")
+        self.assertEqual(self.git(repo, "for-each-ref", "refs/remotes/origin/claude"), "")
+        return repo, path
+
+    def test_squash_merged_branch_on_remote_is_removed(self):
+        repo, path = self.squashed_branch("squashed")
+        tip = self.git(path, "rev-parse", "HEAD")
+        self.git(path, "checkout", "-q", "--detach")  # As the app leaves it.
+        cli = "cccccccc-cccc-4ccc-8ccc-ccccccccccc1"
+        self.session(cli, path)
+        self.delete_in_app(cli)
+        result = self.sweep("--apply")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"REMOVE {cli}: worktree {path} and branch claude/squashed "
+                      f"(was {tip}; tip matches origin/claude/squashed)", result.stdout)
+        self.assertFalse(path.exists())
+        self.assertNotIn("claude/squashed", self.branches(repo))
+        self.assertEqual(self.ledger(), [cli])
+
+    def test_branch_ahead_of_remote_is_held(self):
+        repo, path = self.squashed_branch("ahead")
+        (path / "more").write_text("more\n")
+        self.git(path, "add", "more")
+        self.git(path, "commit", "-qm", "more")
+        cli = "cccccccc-cccc-4ccc-8ccc-ccccccccccc2"
+        self.session(cli, path)
+        self.delete_in_app(cli)
+        result = self.sweep("--apply")
+        self.assertIn(f"HOLD {cli}: claude/ahead in {path} has 2 commit(s)", result.stdout)
+        self.assertIn("origin/claude/ahead is at ", result.stdout)
+        self.assertTrue(path.exists())
+        self.assertIn("claude/ahead", self.branches(repo))
+        self.assertEqual(self.ledger(), [])
+
+    def test_unreachable_remote_holds(self):
+        repo, path = self.squashed_branch("offline")
+        cli = "cccccccc-cccc-4ccc-8ccc-ccccccccccc3"
+        self.session(cli, path)
+        self.delete_in_app(cli)
+        for url, env in ((str(self.base / "gone.git"), {}),
+                         # Hangs like a dead network; the timeout must cut it off.
+                         ("example.invalid:repo.git", dict(GIT_SSH_COMMAND="sleep 5",
+                                                           CLAUDE_SWEEP_REMOTE_TIMEOUT="1"))):
+            with self.subTest(url=url):
+                self.git(repo, "remote", "set-url", "origin", url)
+                started = time.monotonic()
+                result = self.sweep("--apply", **env)
+                self.assertLess(time.monotonic() - started, 4)
+                self.assertIn(f"HOLD {cli}: claude/offline in {path} has 1 commit(s)", result.stdout)
+                self.assertIn("cannot reach origin", result.stdout)
+                self.assertTrue(path.exists())
+                self.assertIn("claude/offline", self.branches(repo))
+        self.assertEqual(self.ledger(), [])
+
     def test_worktree_used_by_another_session_is_held(self):
         repo = self.project()
         path = self.worktree(repo, "shared")

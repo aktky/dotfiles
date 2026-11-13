@@ -331,7 +331,10 @@ render_plist() {
   local prefix line d
   prefix="$(brew_prefix)"
   while IFS= read -r line; do
-    if [[ "$line" == *@WATCH_PATHS@* ]]; then
+    # The template's own header comment names every placeholder; leave it out.
+    [[ "$line" == '<!-- Template:'* ]] && continue
+    # Only the placeholder line itself expands to the watched folders.
+    if [[ "$line" =~ ^[[:space:]]*@WATCH_PATHS@[[:space:]]*$ ]]; then
       while IFS= read -r d; do
         [[ -z "$d" ]] || printf '    <string>%s</string>\n' \
           "$(printf '%s' "$d" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')"

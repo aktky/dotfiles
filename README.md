@@ -68,6 +68,32 @@ this repository. If `CODEX_HOME` is set, use that directory for both configurati
 and credentials. Sign in afresh on each Mac rather than copying token files, and
 do not run `codex logout` between switches.
 
+## Claude desktop cleanup
+
+Deleting a Claude Code session in the desktop app removes only the app's record;
+the transcript, tool results, scratchpad, edit history and worktree stay behind.
+Bootstrap links `claude-sweep` into `~/.local/bin`; the LaunchAgent is opt-in:
+
+```sh
+claude-sweep                    # Preview what would be cleaned and what is held back
+claude-sweep --apply            # Clean now
+claude-sweep install --apply    # LaunchAgent: run on every deletion, and daily
+claude-sweep doctor             # LaunchAgent state, recent log, held-back sessions
+claude-sweep uninstall --apply
+```
+
+- Only sessions with the app's `deleted_<id>` marker and no remaining record are
+  swept; archived sessions are never touched. A session whose transcript is still
+  open, or that was deleted under 30 seconds ago, waits for the next pass.
+- A worktree under `.claude/worktrees/` is removed with its `claude/*` branch only
+  when it has no uncommitted or untracked changes and no commits that another
+  branch, tag or remote lacks. Otherwise it is held back and listed by doctor.
+- Everything is moved to `~/.local/state/claude-sweep/trash/<date>/<id>/` and
+  purged after 7 days; a removed branch's last commit is in
+  `~/Library/Logs/claude-sweep.log`. Each ID is processed once (`done` ledger).
+- `install` watches the account folders that exist at the time. When doctor reports
+  `UNWATCHED` (a new account), run `uninstall --apply`, then `install --apply`.
+
 ## 1Password and GitHub
 
 In 1Password Settings → Developer, enable CLI integration and the SSH Agent.
@@ -105,12 +131,15 @@ Desktop integration uses your account permissions, not per-project restrictions.
 ## Local LLM stack (opt-in)
 
 For Macs with enough unified memory. `llama-swap` serves every local model from one
-OpenAI-compatible endpoint at `http://127.0.0.1:8080` and starts `llama-server`
-(llama.cpp) for the requested model on demand. Shared `bootstrap` never installs it.
+OpenAI-compatible endpoint at `http://127.0.0.1:8080` and starts the requested
+model on demand: `llama-server` (llama.cpp) for GGUF, one `omlx serve` process per
+MLX model. Shared `bootstrap` never installs it.
 
 ```sh
 ./scripts/llmctl install            # Preview
-brew trust --formula mostlygeek/llama-swap/llama-swap  # Third-party tap; once per Mac
+brew trust --formula mostlygeek/llama-swap/llama-swap  # Third-party taps; once per Mac
+brew tap jundot/omlx https://github.com/jundot/omlx && brew trust --formula jundot/omlx/omlx
+xcodebuild -downloadComponent MetalToolchain  # oMLX custom kernels need full Xcode + this
 ./scripts/llmctl install --apply    # config/llm/Brewfile, links, LaunchAgent
 exec zsh -l                         # Loads ~/.config/llm/env (LLM_HOME, HF_HOME)
 llmctl pull qwen3.8-27b             # Preview the download and its size
@@ -119,19 +148,26 @@ llmctl start                        # Then open http://127.0.0.1:8080/ui
 llmctl doctor
 ```
 
-- Declarations live here: `config/llm/models.tsv` (what to download) and
-  `config/llm/llama-swap.yaml` (how to serve it). Keep model names the same in
-  both; `llmctl doctor` reports drift. Requests never trigger downloads.
-- State stays outside the repo in `~/.local/share/llm` (`models/`, `hf/`,
-  `bench/`, excluded from Time Machine) and `~/Library/Logs/llm`.
+- Declarations live here: `config/llm/models.tsv` (what to download, and whether
+  it is `gguf` or `mlx`) and `config/llm/llama-swap.yaml` (how to serve it). Use
+  the same names in both; `llmctl doctor` reports drift. Requests never trigger
+  downloads.
+- llama-swap alone decides what stays loaded. Each model declares the GPU memory
+  it needs (`capacities.gpu`, GB) against a 96 GB pool, and llama-swap unloads
+  others until the requested model fits. oMLX runs one model per process, each
+  with its own base path, so its own multi-model eviction never comes into play.
+- State stays outside the repo in `~/.local/share/llm` (`models/` GGUF, `mlx/`,
+  `omlx/` per-model oMLX settings and SSD KV cache, `hf/`, `bench/`; excluded from
+  Time Machine) and `~/Library/Logs/llm`.
 - `install` writes `~/Library/LaunchAgents/local.llm.llama-swap.plist`, which starts
   llama-swap at login. llama-swap reloads its config when the linked file changes.
   To change the template, run `llmctl stop`, move the old plist away, and reinstall.
-- The large MoE needs more GPU memory than the macOS default (about 75% of RAM).
+- The large MoE needs more GPU memory than the macOS default (Metal's recommended
+  working set, about 107 GB on a 128 GB Mac).
   `llmctl doctor` prints the `sudo sysctl iogpu.wired_limit_mb=...` command;
   the setting resets on reboot and is left to you.
-- `llmctl bench --apply NAME` records `llama-bench` results with the llama.cpp
-  version under `~/.local/share/llm/bench`. Stop llama-swap first.
+- `llmctl bench --apply NAME` records `llama-bench` results for GGUF models with
+  the llama.cpp version under `~/.local/share/llm/bench`. Stop llama-swap first.
 - The server listens on localhost only and has no API key. Add keys through
   1Password before exposing it beyond your own tailnet.
 
@@ -142,7 +178,8 @@ workstation keeps the large MoE and research. The server profile links
 `config/llm/llama-swap.server.yaml` instead: only the daily model, preloaded at
 startup and never unloaded. Later `llmctl` commands detect the profile from that
 link, and `pull` without names fetches only the models the profile serves.
-Apply the shared `bootstrap` on the server too.
+Apply the shared `bootstrap` on the server too. `config/llm/Brewfile` is shared,
+so run the tap trust and Metal Toolchain steps above before installing.
 
 ```sh
 ./scripts/llmctl install --profile server           # Preview

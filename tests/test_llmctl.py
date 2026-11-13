@@ -84,10 +84,24 @@ class LlmctlTests(unittest.TestCase):
     def test_doctor_reports_manifest_drift(self):
         self.assertEqual(self.llmctl("install", "--apply").returncode, 0)
         with open(self.repo / "config/llm/models.tsv", "a") as manifest:
-            manifest.write("orphan\torg/repo\t*.gguf\t1\n")
+            manifest.write("orphan\torg/repo\t*.gguf\t1\tgguf\n")
+            manifest.write("odd\torg/odd\t*\t1\tsafetensors\n")
+        yaml = self.repo / "config/llm/llama-swap.yaml"
+        yaml.write_text(yaml.read_text() + "  stray-model:\n    cmd: echo\n")
         result = self.llmctl("doctor")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("NOT ROUTED: orphan", result.stdout)
+        self.assertIn("BAD FORMAT: odd", result.stdout)
+        self.assertIn("NOT IN MANIFEST: stray-model", result.stdout)
+        # Nested keys such as capacities: or the routing block are not model IDs.
+        self.assertNotIn("capacities", result.stdout)
+        self.assertNotIn("routing", result.stdout)
+
+    def test_shipped_manifest_and_routes_match(self):
+        self.assertEqual(self.llmctl("install", "--apply").returncode, 0)
+        result = self.llmctl("doctor")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn("NOT ", result.stdout)
 
     def test_pull_previews_and_validates_names(self):
         result = self.llmctl("pull", home=False)
@@ -102,6 +116,12 @@ class LlmctlTests(unittest.TestCase):
         self.assertEqual(self.log.read_text().splitlines(), [
             "hf download unsloth/Qwen3.8-27B-GGUF --include Qwen3.8-27B-UD-Q4_K_XL.gguf "
             "--local-dir " + str(self.target / ".local/share/llm/models/qwen3.8-27b")])
+        self.log.unlink()
+        result = self.llmctl("pull", "--apply", "gemma-4-26b-a4b", home=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.log.read_text().splitlines(), [
+            "hf download mlx-community/gemma-4-26b-a4b-it-8bit --include * "
+            "--local-dir " + str(self.target / ".local/share/llm/mlx/gemma-4-26b-a4b")])
 
     def test_bench_needs_download_and_previews(self):
         result = self.llmctl("bench", "qwen3.8-27b", home=False)
@@ -113,6 +133,10 @@ class LlmctlTests(unittest.TestCase):
         result = self.llmctl("bench", "qwen3.8-27b", home=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Qwen3.8-27B-UD-Q4_K_XL.gguf", result.stdout)
+        (self.target / ".local/share/llm/mlx/gemma-4-26b-a4b").mkdir(parents=True)
+        result = self.llmctl("bench", "--apply", "gemma-4-26b-a4b", home=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("MLX", result.stderr)
         self.assertFalse(self.log.exists())
 
     def tailscale_stub(self, serving):

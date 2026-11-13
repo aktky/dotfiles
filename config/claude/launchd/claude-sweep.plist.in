@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template: scripts/claude-sweep install --apply fills @HOME@, @BREW_PREFIX@, @SCRIPT@ and @WATCH_PATHS@. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>local.claude.sweep</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>@SCRIPT@</string>
+    <string>--apply</string>
+    <string>--quiet</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>@BREW_PREFIX@/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>@HOME@</string>
+  </dict>
+  <!-- Claude desktop writes deleted_<id> markers into these account/org folders. -->
+  <key>WatchPaths</key>
+  <array>
+@WATCH_PATHS@
+  </array>
+  <key>StartInterval</key>
+  <integer>86400</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LowPriorityIO</key>
+  <true/>
+  <key>Nice</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>@HOME@/Library/Logs/claude-sweep.log</string>
+  <key>StandardErrorPath</key>
+  <string>@HOME@/Library/Logs/claude-sweep.log</string>
+</dict>
+</plist>

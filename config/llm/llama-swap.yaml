@@ -1,7 +1,8 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/mostlygeek/llama-swap/refs/heads/main/config-schema.json
 # Linked to ~/.config/llama-swap/config.yaml by scripts/llmctl install --apply.
-# One endpoint for every local model; llama-swap starts the matching backend on
-# demand and, without groups, keeps only one model loaded at a time.
+# One endpoint for every local model. llama-swap starts the matching backend on
+# demand: llama-server for GGUF, one oMLX process per MLX model. It is the only
+# place that decides what stays loaded, so oMLX never manages memory on its own.
 # Download weights with scripts/llmctl pull; this file never triggers downloads.
 
 healthCheckTimeout: 600
@@ -10,27 +11,74 @@ startPort: 10001
 # Unload idle models after 30 minutes to give unified memory back.
 globalTTL: 1800
 
+# Each model declares the GPU memory (GB) it needs: weights plus KV cache and
+# runtime overhead. llama-swap unloads models until the requested one fits.
+# 96 GB leaves headroom below the macOS default GPU limit on 128 GB (Metal's
+# recommended working set, about 107 GB) for the OS and other apps. The large
+# MoE fills the pool alone and also needs iogpu.wired_limit_mb raised (llmctl doctor).
+routing:
+  router:
+    use: capacity
+    settings:
+      capacity:
+        pools:
+          gpu: 96
+
 macros:
   models: "${env.LLM_HOME}/models"
   llama-server: >
     llama-server --host 127.0.0.1 --port ${PORT}
     --offline --no-webui --metrics
+  # Every process sees all of $LLM_HOME/mlx but loads only the requested model.
+  # Settings, logs and the SSD KV cache live in a per-model base path, so
+  # concurrent processes never share oMLX state. The SSD KV cache survives
+  # restarts; cap it, since oMLX's default may use half the free disk.
+  omlx: >
+    omlx serve --host 127.0.0.1 --port ${PORT}
+    --model-dir ${env.LLM_HOME}/mlx --no-hf-cache --headless
+    --paged-ssd-cache-max-size 20GB
 
 models:
   qwen3.8-27b:
-    name: "Qwen3.8 27B (UD-Q4_K_XL)"
-    description: "Dense daily model, about 18 GB of weights"
+    name: "Qwen3.8 27B (GGUF UD-Q4_K_XL)"
+    description: "Dense model on llama-server, about 18 GB of weights"
+    capacities:
+      gpu: 24
     cmd: |
       ${llama-server}
       --model ${models}/qwen3.8-27b/Qwen3.8-27B-UD-Q4_K_XL.gguf
       --ctx-size 65536
 
   qwen3.8-flash-next:
-    name: "Qwen3.8 Flash-Next (UD-IQ3_XXS)"
+    name: "Qwen3.8 Flash-Next (GGUF UD-IQ3_XXS)"
     description: "Large MoE, about 84 GB of weights; raise iogpu.wired_limit_mb first"
     ttl: 600
+    capacities:
+      gpu: 96
     cmd: |
       ${llama-server}
       --model ${models}/qwen3.8-flash-next/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00004.gguf
       --ctx-size 32768
       --parallel 1
+
+  qwen3.8-27b-mlx:
+    name: "Qwen3.8 27B (MLX 4bit)"
+    description: "Dense model on oMLX, about 16 GB of weights"
+    capacities:
+      gpu: 22
+    cmd: |
+      ${omlx}
+      --base-path ${env.LLM_HOME}/omlx/qwen3.8-27b-mlx
+      --paged-ssd-cache-dir ${env.LLM_HOME}/omlx/qwen3.8-27b-mlx/cache
+      --memory-guard-gb 22
+
+  gemma-4-26b-a4b:
+    name: "Gemma 4 26B-A4B (MLX 8bit)"
+    description: "Fast MoE on oMLX, about 28 GB of weights"
+    capacities:
+      gpu: 36
+    cmd: |
+      ${omlx}
+      --base-path ${env.LLM_HOME}/omlx/gemma-4-26b-a4b
+      --paged-ssd-cache-dir ${env.LLM_HOME}/omlx/gemma-4-26b-a4b/cache
+      --memory-guard-gb 36

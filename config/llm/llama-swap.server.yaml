@@ -10,6 +10,11 @@ logLevel: info
 startPort: 10001
 # No globalTTL: the daily model stays loaded.
 
+hooks:
+  on_startup:
+    preload:
+      - qwen3.8-27b
+
 macros:
   models: "${env.LLM_HOME}/models"
   llama-server: >
@@ -24,8 +29,3 @@ models:
       ${llama-server}
       --model ${models}/qwen3.8-27b/Qwen3.8-27B-UD-Q4_K_XL.gguf
       --ctx-size 65536
-
-hooks:
-  on_startup:
-    preload:
-      - qwen3.8-27b

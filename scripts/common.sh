@@ -6,7 +6,7 @@ links() {
   printf '%s\n' 'config/zsh/zprofile|.zprofile' 'config/zsh/zshrc|.zshrc' \
     'config/git/config|.gitconfig' 'config/git/ignore|.config/git/ignore' \
     'config/tmux/tmux.conf|.tmux.conf' 'config/vim/vimrc|.vimrc' \
-    'scripts/codex-switch|.local/bin/codex-switch'
+    'scripts/claude-sweep|.local/bin/claude-sweep' 'scripts/codex-switch|.local/bin/codex-switch'
 }
 find_brew() {
   brew_bin="$(command -v brew || true)"

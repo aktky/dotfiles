@@ -1,0 +1,469 @@
+#!/bin/bash
+# Sweep what Claude desktop leaves behind after a session is deleted in the app:
+# transcript, tool results, scratchpad, edit history and a clean worktree/branch.
+# Previews unless --apply is given; files go to a dated trash kept for 7 days.
+set -euo pipefail
+shopt -s nullglob
+self="$0"
+# Installed as an absolute symlink in ~/.local/bin; find the repo through it.
+if [[ -L "$self" ]]; then self="$(readlink "$self")"; fi
+source "$(dirname "$self")/common.sh"
+
+label=local.claude.sweep
+template="$repo_root/config/claude/launchd/claude-sweep.plist.in"
+uuid_re='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+# Tuning knobs, mainly for tests.
+min_age="${CLAUDE_SWEEP_MIN_AGE:-30}"         # seconds a deletion marker must age
+retries="${CLAUDE_SWEEP_RETRIES:-8}"          # extra passes for sessions still busy
+retry_sleep="${CLAUDE_SWEEP_RETRY_SLEEP:-20}"
+keep_days="${CLAUDE_SWEEP_KEEP_DAYS:-7}"
+tmp_root="${CLAUDE_SWEEP_TMP_ROOT:-/private/tmp/claude-$(id -u)}"
+remote_timeout="${CLAUDE_SWEEP_REMOTE_TIMEOUT:-10}"  # seconds for git ls-remote
+
+usage() {
+  cat <<EOF
+Usage: claude-sweep [--apply] [--quiet] [--target-home DIR]
+                     Preview (or clean) leftovers of sessions deleted in Claude desktop
+       claude-sweep install [--apply] [--target-home DIR]
+                     Write and load the LaunchAgent that runs on every deletion
+       claude-sweep uninstall [--apply] [--target-home DIR]
+                     Unload and remove that LaunchAgent
+       claude-sweep doctor [--target-home DIR]
+                     Show LaunchAgent state, recent log lines and held-back sessions
+EOF
+}
+
+parse_opts() {
+  apply=false; quiet=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --apply) apply=true; shift ;;
+      --quiet) quiet=true; shift ;;
+      --target-home) [[ $# -ge 2 ]] || { usage >&2; exit 2; }; target_home="$2"; shift 2 ;;
+      -h|--help) usage; exit 0 ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  done
+  normalize_target
+  if [[ -d "$tmp_root" ]]; then tmp_root="$(cd "$tmp_root" && pwd -P)"; fi
+  claude_dir="$target_home/.claude"
+  app_dir="$target_home/Library/Application Support/Claude/claude-code-sessions"
+  state_dir="$target_home/.local/state/claude-sweep"
+  trash="$state_dir/trash"
+  ledger="$state_dir/done"
+  log_file="$target_home/Library/Logs/claude-sweep.log"
+  plist="$target_home/Library/LaunchAgents/$label.plist"
+  domain="gui/$(id -u)"
+}
+
+# Printed unless --quiet; also logged when applying. Preview never writes anything.
+say() {
+  $quiet || printf '%s\n' "$*"
+  if $apply; then
+    mkdir -p "$(dirname "$log_file")"
+    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$log_file"
+  fi
+}
+
+# --- What the app still knows about -------------------------------------------
+
+# Session IDs and folders referenced by any remaining (active or archived) record.
+load_records() {
+  local f out base
+  protected_ids=""; protected_paths=""
+  for f in "$app_dir"/*/*/local_*.json; do
+    base="${f##*/local_}"
+    out="$(jq -r '[.cliSessionId, .lastAssistantCliSessionId,
+        (.priorCliSessionIds // [] | if type == "array" then .[] else . end),
+        ((.sessionId // "") | strings | sub("^local_"; ""))] | .[] | strings' "$f")" ||
+      { say "ERROR: cannot read $f; nothing swept this run"; return 1; }
+    protected_ids="$protected_ids
+${base%.json}
+$out"
+    out="$(jq -r '.worktreePath, .cwd, .originCwd | strings' "$f")" ||
+      { say "ERROR: cannot read $f; nothing swept this run"; return 1; }
+    protected_paths="$protected_paths
+$out"
+  done
+}
+
+is_protected_id() { printf '%s\n' "$protected_ids" | grep -Fxq -- "$1"; }
+
+# Account/org folders where the app writes its deleted_<id> markers.
+watch_dirs() {
+  local d acct org
+  for d in "$app_dir"/*/*/; do
+    d="${d%/}"; org="${d##*/}"; acct="${d%/*}"; acct="${acct##*/}"
+    [[ "$acct" =~ $uuid_re && "$org" =~ $uuid_re ]] && printf '%s\n' "$d"
+  done
+  return 0
+}
+
+# --- Per-session leftovers -----------------------------------------------------
+
+leftovers() {
+  local id="$1" p
+  for p in "$claude_dir/projects"/*/"$id.jsonl" "$claude_dir/projects"/*/"$id" \
+      "$claude_dir/projects"/*/"$id.desktop-released.json" \
+      "$claude_dir/file-history/$id" "$claude_dir/session-env/$id" \
+      "$tmp_root"/*/"$id" "$tmp_root/cache-break-state-$id.json"; do
+    if [[ -e "$p" || -L "$p" ]]; then printf '%s\n' "$p"; fi
+  done
+  return 0
+}
+
+marker_age() {
+  local ms now
+  now="$(date +%s)"
+  ms="$(head -c 20 "$1" | tr -cd 0-9)"
+  if [[ ${#ms} -ge 12 && ${#ms} -le 16 ]]; then
+    echo $(( now - ms / 1000 ))
+  else
+    echo $(( now - $(stat -f %m "$1") ))
+  fi
+}
+
+# Worktree roots under .claude/worktrees/ that the transcripts ran in.
+worktree_roots() {
+  local cwd rest
+  jq -Rr 'fromjson? | .cwd? // empty | strings' "$@" 2>/dev/null | while IFS= read -r cwd; do
+    case "$cwd" in */.claude/worktrees/?*) ;; *) continue ;; esac
+    rest="${cwd#*/.claude/worktrees/}"
+    printf '%s\n' "${cwd%%/.claude/worktrees/*}/.claude/worktrees/${rest%%/*}"
+  done | LC_ALL=C sort -u
+}
+
+# Sets wt_* for a removable worktree, or hold_reason. Any Git failure holds.
+inspect_worktree() {
+  local root="$1" real p others count tip
+  wt_root=""; wt_main=""; wt_branch=""; wt_head=""; wt_gitdir=""; wt_rule=""; hold_reason=""
+  [[ -d "$root" ]] || return 0
+  real="$(cd "$root" && pwd -P)"
+  if [[ "$(git -C "$root" rev-parse --show-toplevel 2>/dev/null || true)" != "$real" ]]; then
+    hold_reason="$root is not the top of a Git worktree"; return 0
+  fi
+  while IFS= read -r p; do
+    [[ -n "$p" ]] || continue
+    if [[ "$p" == "$root" || "$p" == "$root"/* || "$p" == "$real" || "$p" == "$real"/* ]]; then
+      hold_reason="$root is still used by another session"; return 0
+    fi
+  done <<< "$protected_paths"
+  wt_main="$(git -C "$root" worktree list --porcelain | sed -n '1s/^worktree //p')"
+  wt_gitdir="$(git -C "$root" rev-parse --absolute-git-dir 2>/dev/null || true)"
+  if [[ -z "$wt_main" || "$wt_main" == "$real" || "$wt_gitdir" != */worktrees/* ]]; then
+    hold_reason="$root is not a linked worktree"; return 0
+  fi
+  if [[ -n "$(git -C "$root" status --porcelain 2>&1)" ]]; then
+    hold_reason="$root has uncommitted or untracked changes"; return 0
+  fi
+  wt_head="$(git -C "$root" rev-parse -q --verify 'HEAD^{commit}' || true)"
+  [[ -n "$wt_head" ]] || { hold_reason="$root has no commit checked out"; return 0; }
+  wt_branch="$(git -C "$root" symbolic-ref -q --short HEAD || true)"
+  # The app leaves deleted worktrees at a detached HEAD; fall back to its naming.
+  if [[ -z "$wt_branch" ]] && git -C "$root" show-ref --verify -q "refs/heads/claude/${root##*/}"; then
+    wt_branch="claude/${root##*/}"
+  fi
+  if [[ -n "$wt_branch" ]]; then
+    others="$(git -C "$root" worktree list --porcelain | awk -v b="branch refs/heads/$wt_branch" '
+      /^worktree / { w = substr($0, 10) } $0 == b { print w }' | grep -Fxv -- "$real" || true)"
+    if [[ -n "$others" ]]; then
+      hold_reason="branch $wt_branch is checked out in $others"; return 0
+    fi
+    tip="$(git -C "$root" rev-parse "refs/heads/$wt_branch")"
+  else
+    tip=""
+  fi
+  # Commits only this worktree or its branch can reach. Not --all: it includes HEAD.
+  count="$( { printf '%s\n' "$wt_head" $tip
+    git -C "$root" for-each-ref --format='%(refname)' |
+      awk -v skip="refs/heads/$wt_branch" '$0 != skip && $0 != "refs/stash" { print "^" $0 }'
+  } | git -C "$root" rev-list --count --stdin 2>/dev/null || echo error)"
+  wt_rule="no commits outside other refs"
+  if [[ "$count" == error ]]; then
+    hold_reason="cannot compare $root with other refs"; return 0
+  elif [[ "$count" != 0 ]]; then
+    hold_reason="${wt_branch:-HEAD} in $root has $count commit(s) on no other branch, tag or remote"
+    [[ -n "$wt_branch" ]] || return 0
+    # Squash-merged PRs leave the branch unreachable locally, but the remote
+    # branch of the same name still points at exactly this tip.
+    remote_tip_matches "$root" "$wt_branch" "$tip" || { hold_reason="$hold_reason ($remote_note)"; return 0; }
+    count="$( { printf '%s\n' "$wt_head" "^$tip"
+      git -C "$root" for-each-ref --format='%(refname)' |
+        awk -v skip="refs/heads/$wt_branch" '$0 != skip && $0 != "refs/stash" { print "^" $0 }'
+    } | git -C "$root" rev-list --count --stdin 2>/dev/null || echo error)"
+    if [[ "$count" != 0 ]]; then
+      hold_reason="$hold_reason (HEAD is not on $wt_branch, which matches $remote_note)"; return 0
+    fi
+    hold_reason=""; wt_rule="tip matches $remote_note"
+  fi
+  wt_root="$root"
+}
+
+# Runs a command, killing it after $1 seconds. Bash 3.2 has no timeout(1).
+run_with_timeout() {
+  local secs="$1" pid watcher rc=0; shift
+  "$@" & pid=$!
+  ( sleep "$secs"; kill "$pid" ) >/dev/null 2>&1 & watcher=$!
+  wait "$pid" || rc=$?
+  kill "$watcher" 2>/dev/null || true
+  wait "$watcher" 2>/dev/null || true
+  return "$rc"
+}
+
+# True when the branch's upstream remote (or origin) has refs/heads/<branch>
+# at exactly <tip>. Sets remote_note to what was found, for the log.
+remote_tip_matches() {
+  local root="$1" branch="$2" tip="$3" remote out
+  remote="$(git -C "$root" config "branch.$branch.remote" 2>/dev/null || true)"
+  [[ -n "$remote" && "$remote" != . ]] || remote=origin
+  remote_note="$remote/$branch"
+  out="$(GIT_TERMINAL_PROMPT=0 \
+    GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o ConnectTimeout=$remote_timeout}" \
+    run_with_timeout "$remote_timeout" \
+    git -C "$root" ls-remote -- "$remote" "refs/heads/$branch" 2>/dev/null)" ||
+    { remote_note="cannot reach $remote within ${remote_timeout}s"; return 1; }
+  out="$(printf '%s\n' "$out" | awk -v r="refs/heads/$branch" '$2 == r { print $1 }')"
+  if [[ -z "$out" ]]; then remote_note="$remote has no branch $branch"; return 1; fi
+  if [[ "$out" != "$tip" ]]; then remote_note="$remote/$branch is at $out"; return 1; fi
+}
+
+move_to_trash() {
+  local id="$1" p="$2" rel dest
+  case "$p" in
+    "$target_home"/*) rel="home/${p#"$target_home"/}" ;;
+    "$tmp_root"/*) rel="tmp/${p#"$tmp_root"/}" ;;
+    *) rel="other$p" ;;
+  esac
+  dest="$trash/$today/$id/$rel"
+  if [[ -e "$dest" || -L "$dest" ]]; then dest="$dest.$(date +%s).$$"; fi
+  mkdir -p "$(dirname "$dest")"
+  mv -- "$p" "$dest"
+}
+
+# Returns 0 when finished (swept, kept or nothing left), 1 when it should wait.
+process_id() {
+  local id="$1" marker="$2" paths roots root age t p wts="" n
+  local transcripts=()
+  if [[ -f "$ledger" ]] && cut -f1 "$ledger" | grep -Fxq -- "$id"; then return 0; fi
+  if is_protected_id "$id"; then
+    $apply || say "KEEP $id: still recorded by the app (active or archived)"
+    return 0
+  fi
+  age="$(marker_age "$marker")"
+  if [[ "$age" -lt "$min_age" ]]; then say "WAIT $id: deleted ${age}s ago"; return 1; fi
+  for t in "$claude_dir/projects"/*/"$id.jsonl"; do transcripts+=("$t"); done
+  for t in ${transcripts[@]+"${transcripts[@]}"}; do
+    if lsof -t -- "$t" >/dev/null 2>&1; then say "WAIT $id: transcript still open"; return 1; fi
+  done
+  paths="$(leftovers "$id")"
+  roots=""
+  if [[ ${#transcripts[@]} -gt 0 ]]; then roots="$(worktree_roots "${transcripts[@]}")"; fi
+  while IFS= read -r root; do
+    [[ -n "$root" ]] || continue
+    inspect_worktree "$root"
+    if [[ -n "$hold_reason" ]]; then say "HOLD $id: $hold_reason"; held=$((held + 1)); return 0; fi
+    if [[ -n "$wt_root" ]]; then wts="$wts$wt_root|$wt_main|$wt_branch|$wt_head|$wt_gitdir|$wt_rule
+"; fi
+  done <<< "$roots"
+  if [[ -z "$paths" && -z "$wts" ]]; then
+    nothing=$((nothing + 1))
+    if $apply; then mkdir -p "$state_dir"; printf '%s\t%s\n' "$id" "$today" >> "$ledger"; fi
+    return 0
+  fi
+  while IFS= read -r p; do [[ -z "$p" ]] || say "TRASH $id: $p"; done <<< "$paths"
+  while IFS='|' read -r root wt_main wt_branch wt_head wt_gitdir wt_rule; do
+    [[ -n "$root" ]] || continue
+    if [[ "$wt_branch" == claude/* ]]; then
+      say "REMOVE $id: worktree $root and branch $wt_branch (was $wt_head; $wt_rule)"
+    else
+      say "REMOVE $id: worktree $root at $wt_head${wt_branch:+ (keeping branch $wt_branch)} ($wt_rule)"
+    fi
+  done <<< "$wts"
+  $apply || return 0
+
+  while IFS='|' read -r root wt_main wt_branch wt_head wt_gitdir wt_rule; do
+    [[ -n "$root" ]] || continue
+    # Move the checkout and its admin folder (.git/worktrees/<name>) to trash,
+    # which detaches the branch, then delete the branch whose commits are elsewhere.
+    n="${wt_gitdir##*/}"
+    if ! move_to_trash "$id" "$root" ||
+       ! { mkdir -p "$trash/$today/$id/git-worktrees" &&
+           mv -- "$wt_gitdir" "$trash/$today/$id/git-worktrees/$n"; }; then
+      say "ERROR $id: could not move worktree $root"; return 0
+    fi
+    if [[ "$wt_branch" == claude/* ]] && ! git -C "$wt_main" branch -D -- "$wt_branch" >/dev/null; then
+      say "ERROR $id: could not delete branch $wt_branch"; return 0
+    fi
+  done <<< "$wts"
+  while IFS= read -r p; do
+    [[ -n "$p" && ( -e "$p" || -L "$p" ) ]] || continue
+    if ! move_to_trash "$id" "$p"; then say "ERROR $id: could not move $p"; return 0; fi
+    if [[ "$(dirname "$(dirname "$p")")" == "$claude_dir/projects" ]]; then
+      rmdir "$(dirname "$p")" 2>/dev/null || true
+    fi
+  done <<< "$paths"
+  mkdir -p "$state_dir"
+  printf '%s\t%s\n' "$id" "$today" >> "$ledger"
+  say "DONE $id: moved to $trash/$today/$id"
+}
+
+purge_trash() {
+  local d name cutoff
+  cutoff="$(date -v-"${keep_days}"d +%Y-%m-%d 2>/dev/null || date -d "$keep_days days ago" +%Y-%m-%d)"
+  for d in "$trash"/*; do
+    name="${d##*/}"
+    [[ "$name" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "$name" < "$cutoff" ]] || continue
+    say "PURGE trash/$name (older than $keep_days days)"
+    if $apply; then rm -rf -- "${trash:?}/${name:?}"; fi
+  done
+  return 0
+}
+
+# One pass over deletion markers; "only" limits it to IDs that were waiting.
+run_pass() {
+  local only="$1" m id
+  waiting=""; held=0; nothing=0
+  load_records || return 1
+  for m in "$app_dir"/*/*/deleted_*; do
+    id="${m##*/deleted_}"
+    [[ "$id" =~ $uuid_re ]] || continue
+    if [[ -n "$only" ]] && ! printf '%s\n' "$only" | grep -Fxq -- "$id"; then continue; fi
+    process_id "$id" "$m" || waiting="$waiting$id
+"
+  done
+}
+
+lock() {
+  mkdir -p "$state_dir"
+  if ! mkdir "$state_dir/lock" 2>/dev/null; then
+    if kill -0 "$(cat "$state_dir/lock/pid" 2>/dev/null || echo 0)" 2>/dev/null; then
+      $quiet || echo 'Another claude-sweep run is in progress.'; exit 0
+    fi
+  fi
+  echo $$ > "$state_dir/lock/pid"
+  trap 'rm -rf -- "${state_dir:?}/lock"' EXIT
+}
+
+cmd_sweep() {
+  parse_opts "$@"
+  command -v jq >/dev/null 2>&1 || { echo 'claude-sweep: jq is required (Brewfile).' >&2; exit 1; }
+  today="$(date +%Y-%m-%d)"
+  if $apply; then lock; fi
+  purge_trash
+  local attempt=0
+  run_pass "" || exit 1
+  if ! $quiet; then
+    [[ "$nothing" == 0 ]] || echo "$nothing deleted session(s) have nothing left to sweep."
+  fi
+  while $apply && [[ -n "$waiting" && "$attempt" -lt "$retries" ]]; do
+    attempt=$((attempt + 1))
+    sleep "$retry_sleep"
+    run_pass "$waiting" || exit 1
+  done
+  $apply || $quiet || echo 'Preview only. Use --apply to move these to the trash.'
+}
+
+# --- LaunchAgent ---------------------------------------------------------------
+
+brew_prefix() {
+  if find_brew; then (cd "$(dirname "$brew_bin")/.." && pwd -P); else echo /opt/homebrew; fi
+}
+
+render_plist() {
+  local prefix line d
+  prefix="$(brew_prefix)"
+  while IFS= read -r line; do
+    # The template's own header comment names every placeholder; leave it out.
+    [[ "$line" == '<!-- Template:'* ]] && continue
+    # Only the placeholder line itself expands to the watched folders.
+    if [[ "$line" =~ ^[[:space:]]*@WATCH_PATHS@[[:space:]]*$ ]]; then
+      while IFS= read -r d; do
+        [[ -z "$d" ]] || printf '    <string>%s</string>\n' \
+          "$(printf '%s' "$d" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')"
+      done < <(watch_dirs)
+      continue
+    fi
+    line="${line//@HOME@/$target_home}"
+    line="${line//@BREW_PREFIX@/$prefix}"
+    line="${line//@SCRIPT@/$repo_root/scripts/claude-sweep}"
+    printf '%s\n' "$line"
+  done < "$template"
+}
+
+ours() { [[ -f "$plist" && ! -L "$plist" ]] && grep -q "<string>$label</string>" "$plist"; }
+
+cmd_install() {
+  parse_opts "$@"
+  local rendered d
+  rendered="$(render_plist)"
+  while IFS= read -r d; do printf 'WATCH: %s\n' "$d"; done < <(watch_dirs)
+  [[ -n "$(watch_dirs)" ]] || echo 'No Claude desktop session folders yet; only the daily run will fire.'
+  if ! check_parent "$plist"; then
+    echo 'Stopped before making any changes.' >&2; exit 1
+  elif [[ -L "$plist" ]] || { [[ -e "$plist" ]] && [[ "$(cat "$plist")" != "$rendered" ]]; }; then
+    printf 'CONFLICT: %s differs (run claude-sweep uninstall --apply, or move it explicitly)\n' "$plist" >&2
+    echo 'Stopped before making any changes.' >&2; exit 1
+  elif [[ -e "$plist" ]]; then
+    printf 'OK LaunchAgent: %s\n' "$plist"
+  else
+    printf 'WRITE LaunchAgent: %s (runs claude-sweep --apply on each deletion and daily)\n' "$plist"
+  fi
+  $apply || { echo 'Preview only. Use --apply to install.'; exit 0; }
+  mkdir -p "$(dirname "$plist")" "$target_home/Library/Logs"
+  [[ -e "$plist" ]] || printf '%s\n' "$rendered" > "$plist"
+  launchctl print "$domain/$label" >/dev/null 2>&1 || launchctl bootstrap "$domain" "$plist"
+  echo 'Applied. Check it with claude-sweep doctor.'
+}
+
+cmd_uninstall() {
+  parse_opts "$@"
+  if [[ -e "$plist" || -L "$plist" ]] && ! ours; then
+    printf 'CONFLICT: %s was not written by claude-sweep; leaving it.\n' "$plist" >&2; exit 1
+  fi
+  echo "UNLOAD: launchctl bootout $domain/$label"
+  [[ -e "$plist" ]] && printf 'REMOVE: %s\n' "$plist"
+  $apply || { echo 'Preview only. Use --apply to uninstall.'; exit 0; }
+  launchctl bootout "$domain/$label" 2>/dev/null || echo 'LaunchAgent was not loaded.'
+  rm -f -- "${plist:?}"
+  echo 'Uninstalled. The trash and ledger stay in ~/.local/state/claude-sweep.'
+}
+
+cmd_doctor() {
+  parse_opts "$@"
+  [[ "$apply" == false ]] || { usage >&2; exit 2; }
+  local status=0 d out
+  if [[ -f "$plist" && ! -L "$plist" && "$(cat "$plist")" == "$(render_plist)" ]]; then
+    echo 'OK LaunchAgent'
+  elif ours; then
+    echo 'DIFFERENT LaunchAgent: run claude-sweep uninstall --apply, then install --apply'; status=1
+  else
+    echo 'MISSING LaunchAgent: run claude-sweep install --apply'; status=1
+  fi
+  if ours; then
+    while IFS= read -r d; do
+      grep -Fq "<string>$d</string>" "$plist" || { printf 'UNWATCHED: %s\n' "$d"; status=1; }
+    done < <(watch_dirs)
+  fi
+  if launchctl print "$domain/$label" >/dev/null 2>&1; then echo 'OK loaded'
+  else echo 'NOT LOADED'; status=1; fi
+  for d in jq lsof git; do
+    command -v "$d" >/dev/null 2>&1 || { printf 'MISSING on PATH: %s\n' "$d"; status=1; }
+  done
+  if [[ -s "$log_file" ]]; then echo "Last log lines ($log_file):"; tail -n 10 "$log_file"
+  else echo 'No log yet.'; fi
+  quiet=false; today="$(date +%Y-%m-%d)"
+  if command -v jq >/dev/null 2>&1; then
+    out="$(run_pass "" 2>&1 | grep -E '^(HOLD|WAIT|ERROR)' || true)"
+    if [[ -n "$out" ]]; then echo 'Held back:'; printf '%s\n' "$out"; else echo 'No held-back sessions.'; fi
+  fi
+  exit "$status"
+}
+
+command="${1:-}"
+case "$command" in
+  install) shift; cmd_install "$@" ;;
+  uninstall) shift; cmd_uninstall "$@" ;;
+  doctor) shift; cmd_doctor "$@" ;;
+  help) usage ;;
+  *) cmd_sweep "$@" ;;
+esac

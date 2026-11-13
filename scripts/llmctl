@@ -1,5 +1,5 @@
 #!/bin/bash
-# Opt-in local LLM stack: llama.cpp (llama-server) behind llama-swap.
+# Opt-in local LLM stack: llama-server (GGUF) and oMLX (MLX) behind llama-swap.
 # Every command that changes something previews unless --apply is given.
 set -euo pipefail
 self="$0"
@@ -21,7 +21,7 @@ Usage: $0 <command> [options]
   start | stop | status
                      Control the llama-swap LaunchAgent (listens on $listen)
   bench NAME [--apply]
-                     Run llama-bench on a downloaded model and keep the result
+                     Run llama-bench on a downloaded GGUF model and keep the result
   doctor [--links-only] [--target-home DIR]
                      Check links, LaunchAgent, tools, models and memory limit
 EOF
@@ -33,13 +33,28 @@ llm_links() {
     'scripts/llmctl|.local/bin/llmctl'
 }
 
-# name|repo|include|size for each manifest entry.
+# name|repo|include|size|format for each manifest entry.
 model_rows() {
-  local name repo include size
-  while IFS=$'\t' read -r name repo include size; do
+  local name repo include size format
+  while IFS=$'\t' read -r name repo include size format; do
     [[ -z "$name" || "$name" == \#* ]] && continue
-    printf '%s|%s|%s|%s\n' "$name" "$repo" "$include" "$size"
+    printf '%s|%s|%s|%s|%s\n' "$name" "$repo" "$include" "$size" "$format"
   done < "$llm_dir/models.tsv"
+}
+
+# Where a model lives under LLM_HOME: GGUF for llama-server, MLX for oMLX.
+format_dir() {
+  case "$1" in
+    gguf) echo models ;;
+    mlx) echo mlx ;;
+    *) return 1 ;;
+  esac
+}
+
+# Model IDs defined under the top-level models: key of llama-swap.yaml.
+routed_models() {
+  awk '/^[^ #]/ { in_models = ($0 ~ /^models:/) } in_models && /^  [A-Za-z0-9._-]+:[[:space:]]*$/ {
+    sub(/^  /, ""); sub(/:.*/, ""); print }' "$llm_dir/llama-swap.yaml"
 }
 
 has_model() {
@@ -103,7 +118,7 @@ cmd_install() {
     printf 'WRITE LaunchAgent: %s (starts llama-swap at login)\n' "$plist"
   fi
   [[ "$conflicts" == 0 ]] || { echo 'Stopped before making any changes.' >&2; exit 1; }
-  printf 'DIRS: %s/{models,hf,bench}, %s/Library/Logs/llm\n' "$(llm_home)" "$target_home"
+  printf 'DIRS: %s/{models,mlx,omlx,hf,bench}, %s/Library/Logs/llm\n' "$(llm_home)" "$target_home"
   if ! $links_only; then
     printf 'PACKAGES: brew bundle install --no-upgrade --file=%s/Brewfile\n' "$llm_dir"
     printf 'TIME MACHINE: tmutil addexclusion %s\n' "$(llm_home)"
@@ -120,7 +135,7 @@ cmd_install() {
     mkdir -p "$(dirname "$dest")"
     ln -s "$repo_root/$src" "$dest"
   done < <(llm_links)
-  mkdir -p "$(llm_home)/models" "$(llm_home)/hf" "$(llm_home)/bench" \
+  mkdir -p "$(llm_home)/models" "$(llm_home)/mlx" "$(llm_home)/omlx" "$(llm_home)/hf" "$(llm_home)/bench" \
     "$target_home/Library/Logs/llm" "$(dirname "$plist")"
   [[ -e "$plist" ]] || printf '%s\n' "$rendered" > "$plist"
   if ! $links_only; then tmutil addexclusion "$(llm_home)"; fi
@@ -128,7 +143,7 @@ cmd_install() {
 }
 
 cmd_pull() {
-  local apply=false names="" name repo include size found any=false
+  local apply=false names="" name repo include size format sub found any=false
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --apply) apply=true; shift ;;
@@ -140,17 +155,18 @@ cmd_pull() {
     has_model "$name" || { echo "Unknown model: $name (see config/llm/models.tsv)" >&2; exit 2; }
   done
   : "${LLM_HOME:?Run llmctl install --apply and open a new login shell}"
-  while IFS='|' read -r name repo include size; do
+  while IFS='|' read -r name repo include size format; do
     if [[ -n "$names" ]]; then
       found=false
       for want in $names; do [[ "$want" == "$name" ]] && found=true; done
       $found || continue
     fi
     any=true
-    printf 'PULL %s (~%s GB): hf download %s --include %s --local-dir %s/models/%s\n' \
-      "$name" "$size" "$repo" "$include" "$LLM_HOME" "$name"
+    sub="$(format_dir "$format")" || { echo "Bad format for $name: $format (gguf or mlx)" >&2; exit 2; }
+    printf 'PULL %s (%s, ~%s GB): hf download %s --include %s --local-dir %s/%s/%s\n' \
+      "$name" "$format" "$size" "$repo" "$include" "$LLM_HOME" "$sub" "$name"
     if $apply; then
-      hf download "$repo" --include "$include" --local-dir "$LLM_HOME/models/$name"
+      hf download "$repo" --include "$include" --local-dir "$LLM_HOME/$sub/$name"
     fi
   done < <(model_rows)
   $any || { echo 'No models listed.' >&2; exit 1; }
@@ -193,6 +209,9 @@ cmd_bench() {
   done
   [[ -n "$name" ]] || { usage >&2; exit 2; }
   : "${LLM_HOME:?Run llmctl install --apply and open a new login shell}"
+  if [[ -d "$LLM_HOME/mlx/$name" ]]; then
+    echo "$name is an MLX model; use the oMLX benchmark instead (llama-bench reads GGUF only)." >&2; exit 2
+  fi
   # First shard (or the single file), skipping multimodal projectors.
   file="$(find "$LLM_HOME/models/$name" -name '*.gguf' ! -name 'mmproj*' ! -path '*/MTP/*' 2>/dev/null \
     | LC_ALL=C sort | head -n 1)"
@@ -211,7 +230,7 @@ cmd_bench() {
 
 cmd_doctor() {
   parse_home_opts "$@"
-  local status=0 src rel dest name repo include size dir yaml plist limit mem_mb
+  local status=0 src rel dest name repo include size format sub limit mem_mb found routed
   while IFS='|' read -r src rel; do
     dest="$target_home/$rel"
     if [[ -L "$dest" && "$(readlink "$dest")" == "$repo_root/$src" && -e "$dest" ]]; then
@@ -226,16 +245,18 @@ cmd_doctor() {
   else
     echo 'MISSING/DIFFERENT LaunchAgent: rerun install (stop and move a changed one first)'; status=1
   fi
-  yaml="$llm_dir/llama-swap.yaml"
-  while IFS='|' read -r name repo include size; do
-    grep -q "\${models}/$name/" "$yaml" || { echo "NOT ROUTED: $name is in models.tsv but not llama-swap.yaml"; status=1; }
+  while IFS='|' read -r name repo include size format; do
+    format_dir "$format" >/dev/null || { echo "BAD FORMAT: $name ($format; use gguf or mlx)"; status=1; }
+    found=false
+    while IFS= read -r routed; do [[ "$routed" == "$name" ]] && found=true; done < <(routed_models)
+    $found || { echo "NOT ROUTED: $name is in models.tsv but not llama-swap.yaml"; status=1; }
   done < <(model_rows)
-  for name in $(grep -o '\${models}/[^/]*/' "$yaml" | sed -e 's|^\${models}/||' -e 's|/$||' | sort -u); do
+  while IFS= read -r name; do
     has_model "$name" || { echo "NOT IN MANIFEST: $name is routed but not in models.tsv"; status=1; }
-  done
+  done < <(routed_models)
   if $links_only; then exit "$status"; fi
 
-  for tool in llama-server llama-swap hf; do
+  for tool in llama-server llama-swap hf omlx; do
     if command -v "$tool" >/dev/null 2>&1; then
       printf 'PATH %s: %s\n' "$tool" "$(command -v "$tool")"
     else
@@ -245,10 +266,15 @@ cmd_doctor() {
   if command -v llama-server >/dev/null 2>&1; then
     printf 'llama.cpp: %s\n' "$(llama-server --version 2>&1 | grep -m1 version || echo unknown)"
   fi
-  dir="$(llm_home)/models"
-  while IFS='|' read -r name repo include size; do
-    if find "$dir/$name" -name '*.gguf' 2>/dev/null | grep -q .; then
-      printf 'OK model: %s\n' "$name"
+  if command -v omlx >/dev/null 2>&1; then
+    printf 'oMLX: %s\n' "$(omlx --version 2>&1 | tail -n 1)"
+  fi
+  while IFS='|' read -r name repo include size format; do
+    sub="$(format_dir "$format")" || continue
+    if { [[ "$format" == gguf ]] && [[ -n "$(find "$(llm_home)/$sub/$name" -name '*.gguf' -print -quit 2>/dev/null)" ]]; } ||
+       { [[ "$format" == mlx ]] && [[ -f "$(llm_home)/$sub/$name/config.json" ]] &&
+         [[ -n "$(find "$(llm_home)/$sub/$name" -name '*.safetensors' -print -quit 2>/dev/null)" ]]; }; then
+      printf 'OK model: %s (%s)\n' "$name" "$format"
     else
       printf 'NOT DOWNLOADED: %s (~%s GB; llmctl pull --apply %s)\n' "$name" "$size" "$name"
     fi
@@ -256,7 +282,7 @@ cmd_doctor() {
   limit="$(sysctl -n iogpu.wired_limit_mb 2>/dev/null || echo 0)"
   mem_mb=$(( $(sysctl -n hw.memsize) / 1048576 ))
   if [[ "$limit" == 0 ]]; then
-    printf 'GPU wired limit: macOS default (about 75%% of %s MB). For the large MoE run:\n' "$mem_mb"
+    printf 'GPU wired limit: macOS default (Metal working set, below %s MB RAM). For the large MoE run:\n' "$mem_mb"
     printf '  sudo sysctl iogpu.wired_limit_mb=%s   # resets on reboot\n' $(( mem_mb - 16384 ))
   else
     printf 'GPU wired limit: %s MB of %s MB\n' "$limit" "$mem_mb"

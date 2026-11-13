@@ -1,5 +1,9 @@
 # Local LLM stack (opt-in): installed by scripts/llmctl install --apply.
+# Both taps are third-party: trust each formula once per Mac (see README).
 tap "mostlygeek/llama-swap"
+tap "jundot/omlx", "https://github.com/jundot/omlx"
 brew "llama.cpp"
 brew "mostlygeek/llama-swap/llama-swap"
 brew "hf"
+# Custom kernels speed up Qwen3.5-family models; the build needs Xcode's Metal Toolchain.
+brew "jundot/omlx/omlx", args: ["with-custom-kernel"]

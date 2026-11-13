@@ -4,6 +4,7 @@ import datetime
 import json
 import os
 import pathlib
+import plistlib
 import shutil
 import subprocess
 import tempfile
@@ -301,6 +302,10 @@ class ClaudeSweepTests(unittest.TestCase):
         self.assertIn(f"<string>{self.repo}/scripts/claude-sweep</string>", text)
         self.assertIn("<string>--quiet</string>", text)
         self.assertNotIn("@", text.replace("<?xml", ""))
+        # launchd refuses a file that is not a single well-formed plist.
+        parsed = plistlib.loads(text.encode())
+        self.assertEqual(parsed["WatchPaths"], [str(self.app)])
+        self.assertEqual(parsed["Label"], LABEL)
         self.assertEqual(self.log.read_text().count("launchctl bootstrap"), 2)
         result = self.sweep("doctor", TEST_LOADED="1")
         self.assertEqual(result.returncode, 0, result.stdout)

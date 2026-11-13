@@ -34,14 +34,26 @@ check_parent() {
   done
 }
 
+# Brewfiles in use: the shared one, plus the opt-in LLM one once llmctl linked it.
+brewfiles() {
+  printf '%s\n' "$repo_root/Brewfile"
+  if [[ -L "$target_home/.config/llm/env" ]]; then printf '%s\n' "$repo_root/config/llm/Brewfile"; fi
+}
+
 # Updates the caller's status; strict also fails on unmanaged packages.
 check_packages() {
+  local file
   if find_brew; then
-    if ! HOMEBREW_NO_AUTO_UPDATE=1 "$brew_bin" bundle check --no-upgrade --file="$repo_root/Brewfile"; then
-      echo 'Missing declared packages. Review bootstrap, then apply.'; status=1
-    fi
-    expected_brews="$(HOMEBREW_NO_AUTO_UPDATE=1 "$brew_bin" bundle list --brews --file="$repo_root/Brewfile")" || exit 1
-    expected_casks="$(HOMEBREW_NO_AUTO_UPDATE=1 "$brew_bin" bundle list --casks --file="$repo_root/Brewfile")" || exit 1
+    expected_brews=""; expected_casks=""
+    while IFS= read -r file; do
+      if ! HOMEBREW_NO_AUTO_UPDATE=1 "$brew_bin" bundle check --no-upgrade --file="$file"; then
+        printf 'Missing packages declared in %s. Review and apply.\n' "${file#$repo_root/}"; status=1
+      fi
+      expected_brews="$expected_brews
+$(HOMEBREW_NO_AUTO_UPDATE=1 "$brew_bin" bundle list --brews --file="$file")" || exit 1
+      expected_casks="$expected_casks
+$(HOMEBREW_NO_AUTO_UPDATE=1 "$brew_bin" bundle list --casks --file="$file")" || exit 1
+    done < <(brewfiles)
     actual_brews="$(HOMEBREW_NO_AUTO_UPDATE=1 "$brew_bin" leaves)" || exit 1
     actual_casks="$(HOMEBREW_NO_AUTO_UPDATE=1 "$brew_bin" list --cask)" || exit 1
     extras="$(LC_ALL=C comm -23 <(printf '%s\n' "$actual_brews" | LC_ALL=C sort -u) <(printf '%s\n' "$expected_brews" | LC_ALL=C sort -u)

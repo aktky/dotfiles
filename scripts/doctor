@@ -37,4 +37,7 @@ if ! git config --get user.name >/dev/null || ! git config --get user.email >/de
   echo 'MISSING Git identity: see config/git/config.local.example'; status=1
 fi
 printf 'Git commit signing: %s\n' "$(git config --get commit.gpgsign || echo 'not enabled')"
+if [[ -L "$target_home/.config/llm/env" ]]; then
+  echo 'Local LLM stack enabled: run scripts/llmctl doctor for its checks.'
+fi
 exit "$status"

@@ -5,3 +5,5 @@ elif [[ -x /usr/local/bin/brew ]]; then
 fi
 typeset -U path PATH
 path=("$HOME/.local/bin" "$HOME/.grok/bin" $path)
+# Opt-in local LLM stack (scripts/llmctl install --apply links this file).
+if [[ -r "$HOME/.config/llm/env" ]]; then source "$HOME/.config/llm/env"; fi

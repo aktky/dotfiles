@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""llmctl tests: temporary homes and stubbed tools, never real installs or downloads."""
+import os
+import pathlib
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+class LlmctlTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="dotfiles-llm-test-")
+        self.addCleanup(self.temp.cleanup)
+        self.base = pathlib.Path(self.temp.name).resolve()
+        self.repo = self.base / "repo with spaces"
+        shutil.copytree(ROOT, self.repo, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+        self.target = self.base / "target home"
+        self.target.mkdir()
+        self.bindir = self.base / "bin"
+        self.bindir.mkdir()
+        self.log = self.base / "calls"
+        for name in ("hf", "brew", "launchctl", "tmutil", "llama-bench"):
+            stub = self.bindir / name
+            stub.write_text('#!/bin/bash\necho "%s $*" >> "$DOTFILES_TEST_LOG"\n' % name)
+            stub.chmod(0o755)
+        self.env = dict(os.environ, PATH=str(self.bindir) + os.pathsep + os.defpath,
+                        DOTFILES_TEST_LOG=str(self.log),
+                        LLM_HOME=str(self.target / ".local/share/llm"))
+
+    def llmctl(self, *args, home=True):
+        extra = ["--links-only", "--target-home", str(self.target)] if home else []
+        return subprocess.run([str(self.repo / "scripts/llmctl"), *args, *extra],
+                              env=self.env, text=True, capture_output=True)
+
+    def plist(self):
+        return self.target / "Library/LaunchAgents/local.llm.llama-swap.plist"
+
+    def test_install_preview_never_writes(self):
+        result = self.llmctl("install")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(list(self.target.iterdir()), [])
+        self.assertFalse(self.log.exists())
+
+    def test_install_is_idempotent_and_diagnosable(self):
+        for _ in range(2):
+            result = self.llmctl("install", "--apply")
+            self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.llmctl("doctor")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual((self.target / ".config/llama-swap/config.yaml").resolve(),
+                         self.repo / "config/llm/llama-swap.yaml")
+        text = self.plist().read_text()
+        self.assertIn(str(self.target) + "/.config/llama-swap/config.yaml", text)
+        self.assertIn("127.0.0.1:8080", text)
+        self.assertNotIn("@", text.replace("<?xml", ""))
+        for sub in ("models", "hf", "bench"):
+            self.assertTrue((self.target / ".local/share/llm" / sub).is_dir())
+        self.assertFalse(self.log.exists())  # --links-only: no brew, no tmutil.
+        linked = self.target / ".local/bin/llmctl"
+        result = subprocess.run([str(linked), "--help"], env=self.env,
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_changed_launch_agent_blocks_install(self):
+        self.plist().parent.mkdir(parents=True)
+        self.plist().write_text("keep me")
+        result = self.llmctl("install", "--apply")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.plist().read_text(), "keep me")
+        self.assertFalse((self.target / ".config").exists())
+
+    def test_existing_config_blocks_install(self):
+        conflict = self.target / ".config/llama-swap/config.yaml"
+        conflict.parent.mkdir(parents=True)
+        conflict.write_text("keep me")
+        result = self.llmctl("install", "--apply")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(conflict.read_text(), "keep me")
+        self.assertFalse(self.plist().exists())
+
+    def test_doctor_reports_manifest_drift(self):
+        self.assertEqual(self.llmctl("install", "--apply").returncode, 0)
+        with open(self.repo / "config/llm/models.tsv", "a") as manifest:
+            manifest.write("orphan\torg/repo\t*.gguf\t1\n")
+        result = self.llmctl("doctor")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("NOT ROUTED: orphan", result.stdout)
+
+    def test_pull_previews_and_validates_names(self):
+        result = self.llmctl("pull", home=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("qwen3.8-flash-next", result.stdout)
+        self.assertFalse(self.log.exists())
+        result = self.llmctl("pull", "--apply", "qwen3.8-27b", "unknown", home=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(self.log.exists())
+        result = self.llmctl("pull", "--apply", "qwen3.8-27b", home=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.log.read_text().splitlines(), [
+            "hf download unsloth/Qwen3.8-27B-GGUF --include Qwen3.8-27B-UD-Q4_K_XL.gguf "
+            "--local-dir " + str(self.target / ".local/share/llm/models/qwen3.8-27b")])
+
+    def test_bench_needs_download_and_previews(self):
+        result = self.llmctl("bench", "qwen3.8-27b", home=False)
+        self.assertNotEqual(result.returncode, 0)
+        model = self.target / ".local/share/llm/models/qwen3.8-27b"
+        model.mkdir(parents=True)
+        (model / "mmproj-F16.gguf").write_text("")
+        (model / "Qwen3.8-27B-UD-Q4_K_XL.gguf").write_text("")
+        result = self.llmctl("bench", "qwen3.8-27b", home=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Qwen3.8-27B-UD-Q4_K_XL.gguf", result.stdout)
+        self.assertFalse(self.log.exists())
+
+    def test_package_check_includes_llm_brewfile_once_enabled(self):
+        stub = self.base / "brew-stub"
+        stub.write_text("""#!/bin/bash
+printf '%s\\n' "$*" >> "$DOTFILES_TEST_LOG"
+case "$1 $2" in
+  'bundle check') exit 0 ;;
+  'bundle list') case "$*" in *config/llm/Brewfile) [[ "$3" == --brews ]] && echo llama.cpp ;; *) [[ "$3" == --brews ]] && echo git ;; esac; true ;;
+  'leaves ') printf 'git\\nllama.cpp\\n' ;;
+  'list --cask') : ;;
+  *) exit 90 ;;
+esac
+""")
+        stub.chmod(0o755)
+        command = ["/bin/bash", "-c", r'''source "$1"
+target_home="$3"
+test_brew="$2"
+find_brew() { brew_bin="$test_brew"; }
+status=0
+strict=true
+check_packages
+exit "$status"
+''', "test", str(self.repo / "scripts/common.sh"), str(stub), str(self.target)]
+        result = subprocess.run(command, env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("llama.cpp", result.stdout)
+        self.assertEqual(self.llmctl("install", "--apply").returncode, 0)
+        result = subprocess.run(command, env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("install", self.log.read_text())
+
+
+if __name__ == "__main__":
+    unittest.main()

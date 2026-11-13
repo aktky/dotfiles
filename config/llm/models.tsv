@@ -1,0 +1,5 @@
+# Models that scripts/llmctl pull downloads into $LLM_HOME/models/<name>/.
+# Columns (tab-separated): name, Hugging Face repo, --include pattern, approx size GB.
+# Keep <name> in sync with ${models}/<name>/ in llama-swap.yaml; llmctl doctor checks it.
+qwen3.8-27b	unsloth/Qwen3.8-27B-GGUF	Qwen3.8-27B-UD-Q4_K_XL.gguf	17.6
+qwen3.8-flash-next	unsloth/Qwen3.8-Flash-Next-GGUF	UD-IQ3_XXS/*	83.6

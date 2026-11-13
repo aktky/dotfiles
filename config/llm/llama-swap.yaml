@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/mostlygeek/llama-swap/refs/heads/main/config-schema.json
+# Linked to ~/.config/llama-swap/config.yaml by scripts/llmctl install --apply.
+# One endpoint for every local model; llama-swap starts the matching backend on
+# demand and, without groups, keeps only one model loaded at a time.
+# Download weights with scripts/llmctl pull; this file never triggers downloads.
+
+healthCheckTimeout: 600
+logLevel: info
+startPort: 10001
+# Unload idle models after 30 minutes to give unified memory back.
+globalTTL: 1800
+
+macros:
+  models: "${env.LLM_HOME}/models"
+  llama-server: >
+    llama-server --host 127.0.0.1 --port ${PORT}
+    --offline --no-webui --metrics
+
+models:
+  qwen3.8-27b:
+    name: "Qwen3.8 27B (UD-Q4_K_XL)"
+    description: "Dense daily model, about 18 GB of weights"
+    cmd: |
+      ${llama-server}
+      --model ${models}/qwen3.8-27b/Qwen3.8-27B-UD-Q4_K_XL.gguf
+      --ctx-size 65536
+
+  qwen3.8-flash-next:
+    name: "Qwen3.8 Flash-Next (UD-IQ3_XXS)"
+    description: "Large MoE, about 84 GB of weights; raise iogpu.wired_limit_mb first"
+    ttl: 600
+    cmd: |
+      ${llama-server}
+      --model ${models}/qwen3.8-flash-next/UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00004.gguf
+      --ctx-size 32768
+      --parallel 1

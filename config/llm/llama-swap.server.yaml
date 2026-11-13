@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/mostlygeek/llama-swap/refs/heads/main/config-schema.json
+# Server profile: linked to ~/.config/llama-swap/config.yaml by
+# scripts/llmctl install --profile server --apply.
+# An always-on daily model for other devices on the tailnet; research models
+# stay on the workstation profile (llama-swap.yaml).
+# Download weights with scripts/llmctl pull; this file never triggers downloads.
+
+healthCheckTimeout: 600
+logLevel: info
+startPort: 10001
+# No globalTTL: the daily model stays loaded.
+
+hooks:
+  on_startup:
+    preload:
+      - qwen3.8-27b
+
+macros:
+  models: "${env.LLM_HOME}/models"
+  llama-server: >
+    llama-server --host 127.0.0.1 --port ${PORT}
+    --offline --no-webui --metrics
+
+models:
+  qwen3.8-27b:
+    name: "Qwen3.8 27B (UD-Q4_K_XL)"
+    description: "Dense daily model, about 18 GB of weights"
+    cmd: |
+      ${llama-server}
+      --model ${models}/qwen3.8-27b/Qwen3.8-27B-UD-Q4_K_XL.gguf
+      --ctx-size 65536

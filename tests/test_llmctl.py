@@ -139,6 +139,69 @@ class LlmctlTests(unittest.TestCase):
         self.assertIn("MLX", result.stderr)
         self.assertFalse(self.log.exists())
 
+    def tailscale_stub(self, serving):
+        stub = self.bindir / "tailscale"
+        status = "|-- / proxy http://127.0.0.1:8080" if serving else "No serve config"
+        stub.write_text('#!/bin/bash\necho "tailscale $*" >> "$DOTFILES_TEST_LOG"\n'
+                        '[[ "$1 $2" == "serve status" ]] && echo "%s"\ntrue\n' % status)
+        stub.chmod(0o755)
+
+    def test_server_profile_links_server_config_and_is_detected(self):
+        result = self.llmctl("install", "--profile", "server", "--apply")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.target / ".config/llama-swap/config.yaml").resolve(),
+                         self.repo / "config/llm/llama-swap.server.yaml")
+        result = self.llmctl("install")  # No --profile: keeps the installed one.
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("PROFILE: server", result.stdout)
+        result = self.llmctl("doctor")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("PROFILE: server", result.stdout)
+
+    def test_switching_profile_needs_explicit_relink(self):
+        self.assertEqual(self.llmctl("install", "--apply").returncode, 0)
+        result = self.llmctl("install", "--profile", "server", "--apply")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.target / ".config/llama-swap/config.yaml").resolve(),
+                         self.repo / "config/llm/llama-swap.yaml")
+        self.assertEqual(self.llmctl("install", "--profile", "nope").returncode, 2)
+
+    def test_doctor_reports_server_route_missing_from_manifest(self):
+        self.assertEqual(self.llmctl("install", "--profile", "server", "--apply").returncode, 0)
+        with open(self.repo / "config/llm/llama-swap.server.yaml", "a") as config:
+            config.write("  ghost:\n    cmd: llama-server --model ${models}/ghost/x.gguf\n")
+        result = self.llmctl("doctor")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("NOT IN MANIFEST: ghost is routed by llama-swap.server.yaml", result.stdout)
+
+    def test_pull_without_names_follows_installed_profile(self):
+        self.assertEqual(self.llmctl("install", "--profile", "server", "--apply").returncode, 0)
+        env = dict(self.env, HOME=str(self.target))
+        result = subprocess.run([str(self.repo / "scripts/llmctl"), "pull"], env=env,
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("PULL qwen3.8-27b", result.stdout)
+        self.assertNotIn("flash-next", result.stdout)
+
+    def test_serve_requires_server_profile_and_previews(self):
+        self.tailscale_stub(serving=False)
+        env = dict(self.env, HOME=str(self.target))
+        serve = lambda *a: subprocess.run([str(self.repo / "scripts/llmctl"), "serve", *a],
+                                          env=env, text=True, capture_output=True)
+        self.assertEqual(serve("--apply").returncode, 1)  # Not installed.
+        self.assertEqual(self.llmctl("install", "--profile", "server", "--apply").returncode, 0)
+        result = serve()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("tailscale serve --bg --https=443 http://127.0.0.1:8080", result.stdout)
+        self.assertFalse(self.log.exists())
+        self.assertEqual(serve("--apply").returncode, 0)
+        self.assertEqual(serve("--off", "--apply").returncode, 0)
+        self.assertEqual(self.log.read_text().splitlines(), [
+            "tailscale serve --bg --https=443 http://127.0.0.1:8080",
+            "tailscale serve status",
+            "tailscale serve --https=443 off",
+            "tailscale serve status"])
+
     def test_package_check_includes_llm_brewfile_once_enabled(self):
         stub = self.base / "brew-stub"
         stub.write_text("""#!/bin/bash

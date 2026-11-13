@@ -169,7 +169,51 @@ llmctl doctor
 - `llmctl bench --apply NAME` records `llama-bench` results for GGUF models with
   the llama.cpp version under `~/.local/share/llm/bench`. Stop llama-swap first.
 - The server listens on localhost only and has no API key. Add keys through
-  1Password before exposing it to other devices.
+  1Password before exposing it beyond your own tailnet.
+
+### Inference server profile
+
+A second Mac can run the daily model for every device on the tailnet, while the
+workstation keeps the large MoE and research. The server profile links
+`config/llm/llama-swap.server.yaml` instead: only the daily model, preloaded at
+startup and never unloaded. Later `llmctl` commands detect the profile from that
+link, and `pull` without names fetches only the models the profile serves.
+Apply the shared `bootstrap` on the server too. `config/llm/Brewfile` is shared,
+so run the tap trust and Metal Toolchain steps above before installing.
+
+```sh
+./scripts/llmctl install --profile server           # Preview
+./scripts/llmctl install --profile server --apply
+exec zsh -l
+llmctl pull --apply                                 # Only the server's models
+llmctl start
+llmctl serve                                        # Preview Tailscale Serve
+llmctl serve --apply                                # https://<host>.<tailnet>.ts.net
+llmctl doctor
+```
+
+- `serve` keeps llama-swap on `127.0.0.1:8080` and lets Tailscale Serve proxy HTTPS
+  from the tailnet only; enable HTTPS certificates in the Tailscale admin console
+  first. Every device on the tailnet can call it, since there is no API key.
+  `llmctl serve --off --apply` withdraws it. Clients use
+  `https://<host>.<tailnet>.ts.net/v1` as an OpenAI-compatible base URL.
+- To switch a Mac between profiles, run `llmctl stop`, remove the
+  `~/.config/llama-swap/config.yaml` link, and install with the other profile.
+
+Set these on the server by hand, once:
+
+- Energy: `sudo pmset -c sleep 0 disksleep 0 womp 1 autorestart 1`. A MacBook
+  still sleeps when its lid closes without an external display, so leave the lid
+  open.
+- Automatic login for the server's user: the LaunchAgent starts only in a logged-in
+  session. That requires FileVault off. If you keep FileVault on, use
+  `sudo fdesetup authrestart` for planned restarts and unlock by hand after a
+  power loss; the model is down until then.
+- Battery: limit charging (Optimized Battery Charging or a charge-limit tool),
+  since the server stays plugged in.
+- Software Update: keep security updates, but turn off automatic installs that
+  restart the Mac unattended.
+- Remote Login (System Settings → General → Sharing) for SSH over the tailnet.
 
 ## Check changes
 

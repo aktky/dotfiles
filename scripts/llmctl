@@ -14,23 +14,56 @@ listen=127.0.0.1:8080
 usage() {
   cat <<EOF
 Usage: $0 <command> [options]
-  install [--apply] [--links-only] [--target-home DIR]
+  install [--profile workstation|server] [--apply] [--links-only] [--target-home DIR]
                      Install config/llm/Brewfile, link configs, write the LaunchAgent
   pull [--apply] [NAME ...]
                      Download models listed in config/llm/models.tsv
+                     (without names: the models the installed profile serves)
   start | stop | status
                      Control the llama-swap LaunchAgent (listens on $listen)
+  serve [--off] [--apply]
+                     Server profile: publish llama-swap to the tailnet with Tailscale Serve
   bench NAME [--apply]
                      Run llama-bench on a downloaded GGUF model and keep the result
-  doctor [--links-only] [--target-home DIR]
+  doctor [--profile workstation|server] [--links-only] [--target-home DIR]
                      Check links, LaunchAgent, tools, models and memory limit
+Profiles: workstation (default) links llama-swap.yaml; server links
+llama-swap.server.yaml. Later commands detect the profile from that link.
 EOF
+}
+
+profile_yaml() {
+  case "$1" in
+    workstation) echo llama-swap.yaml ;;
+    server) echo llama-swap.server.yaml ;;
+    *) return 1 ;;
+  esac
+}
+
+config_link() { printf '%s\n' "$target_home/.config/llama-swap/config.yaml"; }
+
+# Installed profile, read from the config link; empty when not installed.
+detect_profile() {
+  local dest p
+  dest="$(config_link)"
+  [[ -L "$dest" ]] || return 0
+  for p in workstation server; do
+    if [[ "$(readlink "$dest")" == "$llm_dir/$(profile_yaml "$p")" ]]; then echo "$p"; return 0; fi
+  done
 }
 
 llm_links() {
   printf '%s\n' 'config/llm/env|.config/llm/env' \
-    'config/llm/llama-swap.yaml|.config/llama-swap/config.yaml' \
+    "config/llm/$(profile_yaml "$profile")|.config/llama-swap/config.yaml" \
     'scripts/llmctl|.local/bin/llmctl'
+}
+
+find_tailscale() {
+  tailscale_bin="$(command -v tailscale || true)"
+  if [[ -z "$tailscale_bin" && -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ]]; then
+    tailscale_bin=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+  fi
+  [[ -n "$tailscale_bin" ]]
 }
 
 # name|repo|include|size|format for each manifest entry.
@@ -51,10 +84,17 @@ format_dir() {
   esac
 }
 
-# Model IDs defined under the top-level models: key of llama-swap.yaml.
+# Model IDs defined under the top-level models: key of a llama-swap config
+# (default: the workstation config).
 routed_models() {
   awk '/^[^ #]/ { in_models = ($0 ~ /^models:/) } in_models && /^  [A-Za-z0-9._-]+:[[:space:]]*$/ {
-    sub(/^  /, ""); sub(/:.*/, ""); print }' "$llm_dir/llama-swap.yaml"
+    sub(/^  /, ""); sub(/:.*/, ""); print }' "${1:-$llm_dir/llama-swap.yaml}"
+}
+
+is_routed() {
+  local routed
+  while IFS= read -r routed; do [[ "$routed" == "$1" ]] && return 0; done < <(routed_models "$2")
+  return 1
 }
 
 has_model() {
@@ -78,12 +118,13 @@ render_plist() {
 }
 
 parse_home_opts() {
-  apply=false; links_only=false; custom_home=false; strict=false
+  apply=false; links_only=false; custom_home=false; strict=false; profile=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --apply) apply=true; shift ;;
       --links-only) links_only=true; shift ;;
       --target-home) [[ $# -ge 2 ]] || { usage; exit 2; }; target_home="$2"; custom_home=true; shift 2 ;;
+      --profile) [[ $# -ge 2 ]] || { usage >&2; exit 2; }; profile="$2"; shift 2 ;;
       *) usage >&2; exit 2 ;;
     esac
   done
@@ -91,11 +132,15 @@ parse_home_opts() {
     echo '--target-home requires --links-only (Homebrew is machine-wide).' >&2; exit 2
   fi
   normalize_target
+  [[ -n "$profile" ]] || profile="$(detect_profile)"
+  [[ -n "$profile" ]] || profile=workstation
+  profile_yaml "$profile" >/dev/null || { echo "Unknown profile: $profile (workstation or server)" >&2; exit 2; }
 }
 
 cmd_install() {
   parse_home_opts "$@"
   local conflicts=0 src rel dest plist rendered
+  printf 'PROFILE: %s (config/llm/%s)\n' "$profile" "$(profile_yaml "$profile")"
   while IFS='|' read -r src rel; do
     dest="$target_home/$rel"
     if ! check_parent "$dest"; then conflicts=1; continue; fi
@@ -140,10 +185,11 @@ cmd_install() {
   [[ -e "$plist" ]] || printf '%s\n' "$rendered" > "$plist"
   if ! $links_only; then tmutil addexclusion "$(llm_home)"; fi
   echo 'Applied. Open a new login shell, run llmctl pull, then llmctl start.'
+  if [[ "$profile" == server ]]; then echo 'Then publish it to the tailnet with llmctl serve.'; fi
 }
 
 cmd_pull() {
-  local apply=false names="" name repo include size format sub found any=false
+  local apply=false names="" name repo include size format sub found any=false installed yaml=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --apply) apply=true; shift ;;
@@ -155,11 +201,18 @@ cmd_pull() {
     has_model "$name" || { echo "Unknown model: $name (see config/llm/models.tsv)" >&2; exit 2; }
   done
   : "${LLM_HOME:?Run llmctl install --apply and open a new login shell}"
+  installed="$(detect_profile)"
+  if [[ -z "$names" && -n "$installed" ]]; then
+    yaml="$llm_dir/$(profile_yaml "$installed")"
+    printf 'PROFILE: %s (models routed by config/llm/%s)\n' "$installed" "${yaml##*/}"
+  fi
   while IFS='|' read -r name repo include size format; do
     if [[ -n "$names" ]]; then
       found=false
       for want in $names; do [[ "$want" == "$name" ]] && found=true; done
       $found || continue
+    elif [[ -n "$yaml" ]]; then
+      is_routed "$name" "$yaml" || continue
     fi
     any=true
     sub="$(format_dir "$format")" || { echo "Bad format for $name: $format (gguf or mlx)" >&2; exit 2; }
@@ -196,6 +249,33 @@ cmd_service() {
         echo 'llama-swap is not loaded.'
       fi ;;
   esac
+}
+
+# Tailscale Serve proxies tailnet HTTPS to localhost; llama-swap keeps
+# listening on 127.0.0.1 and is never reachable from other networks.
+cmd_serve() {
+  local apply=false off=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --apply) apply=true; shift ;;
+      --off) off=true; shift ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  done
+  if [[ "$(detect_profile)" != server ]]; then
+    echo 'serve is for the server profile: llmctl install --profile server --apply' >&2; exit 1
+  fi
+  if $off; then
+    set -- serve --https=443 off
+  else
+    set -- serve --bg --https=443 "http://$listen"
+  fi
+  printf 'TAILSCALE: tailscale %s\n' "$*"
+  $off || echo 'Every device on your tailnet can reach it; llama-swap has no API key.'
+  $apply || { echo 'Preview only. Use --apply to change Tailscale Serve.'; exit 0; }
+  find_tailscale || { echo 'Tailscale CLI not found; install Tailscale and sign in.' >&2; exit 1; }
+  "$tailscale_bin" "$@"
+  "$tailscale_bin" serve status || true
 }
 
 cmd_bench() {
@@ -245,15 +325,20 @@ cmd_doctor() {
   else
     echo 'MISSING/DIFFERENT LaunchAgent: rerun install (stop and move a changed one first)'; status=1
   fi
+  printf 'PROFILE: %s\n' "$profile"
+  # The workstation config serves every manifest model; the server one a subset.
   while IFS='|' read -r name repo include size format; do
     format_dir "$format" >/dev/null || { echo "BAD FORMAT: $name ($format; use gguf or mlx)"; status=1; }
-    found=false
-    while IFS= read -r routed; do [[ "$routed" == "$name" ]] && found=true; done < <(routed_models)
-    $found || { echo "NOT ROUTED: $name is in models.tsv but not llama-swap.yaml"; status=1; }
+    is_routed "$name" "$llm_dir/llama-swap.yaml" ||
+      { echo "NOT ROUTED: $name is in models.tsv but not llama-swap.yaml"; status=1; }
   done < <(model_rows)
-  while IFS= read -r name; do
-    has_model "$name" || { echo "NOT IN MANIFEST: $name is routed but not in models.tsv"; status=1; }
-  done < <(routed_models)
+  for yaml in "$llm_dir"/llama-swap*.yaml; do
+    while IFS= read -r name; do
+      has_model "$name" ||
+        { echo "NOT IN MANIFEST: $name is routed by ${yaml##*/} but not in models.tsv"; status=1; }
+    done < <(routed_models "$yaml")
+  done
+  yaml="$llm_dir/$(profile_yaml "$profile")"
   if $links_only; then exit "$status"; fi
 
   for tool in llama-server llama-swap hf omlx; do
@@ -271,6 +356,7 @@ cmd_doctor() {
   fi
   while IFS='|' read -r name repo include size format; do
     sub="$(format_dir "$format")" || continue
+    is_routed "$name" "$yaml" || continue
     if { [[ "$format" == gguf ]] && [[ -n "$(find "$(llm_home)/$sub/$name" -name '*.gguf' -print -quit 2>/dev/null)" ]]; } ||
        { [[ "$format" == mlx ]] && [[ -f "$(llm_home)/$sub/$name/config.json" ]] &&
          [[ -n "$(find "$(llm_home)/$sub/$name" -name '*.safetensors' -print -quit 2>/dev/null)" ]]; }; then
@@ -282,10 +368,21 @@ cmd_doctor() {
   limit="$(sysctl -n iogpu.wired_limit_mb 2>/dev/null || echo 0)"
   mem_mb=$(( $(sysctl -n hw.memsize) / 1048576 ))
   if [[ "$limit" == 0 ]]; then
-    printf 'GPU wired limit: macOS default (Metal working set, below %s MB RAM). For the large MoE run:\n' "$mem_mb"
-    printf '  sudo sysctl iogpu.wired_limit_mb=%s   # resets on reboot\n' $(( mem_mb - 16384 ))
+    printf 'GPU wired limit: macOS default (Metal working set, below %s MB RAM).\n' "$mem_mb"
+    if [[ "$profile" == workstation ]]; then
+      printf 'For the large MoE run:\n  sudo sysctl iogpu.wired_limit_mb=%s   # resets on reboot\n' $(( mem_mb - 16384 ))
+    fi
   else
     printf 'GPU wired limit: %s MB of %s MB\n' "$limit" "$mem_mb"
+  fi
+  if [[ "$profile" == server ]]; then
+    if ! find_tailscale; then
+      echo 'MISSING Tailscale CLI: install Tailscale and sign in'; status=1
+    elif "$tailscale_bin" serve status 2>/dev/null | grep -q "$listen"; then
+      echo "OK Tailscale Serve: proxies to $listen"
+    else
+      echo 'NOT SERVED on the tailnet: llmctl serve --apply'; status=1
+    fi
   fi
   exit "$status"
 }
@@ -296,6 +393,7 @@ case "$command" in
   install) cmd_install "$@" ;;
   pull) cmd_pull "$@" ;;
   start|stop|status) [[ $# == 0 ]] || { usage >&2; exit 2; }; cmd_service "$command" ;;
+  serve) cmd_serve "$@" ;;
   bench) cmd_bench "$@" ;;
   doctor) cmd_doctor "$@" ;;
   -h|--help|help) usage ;;

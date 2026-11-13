@@ -68,6 +68,32 @@ this repository. If `CODEX_HOME` is set, use that directory for both configurati
 and credentials. Sign in afresh on each Mac rather than copying token files, and
 do not run `codex logout` between switches.
 
+## Claude desktop cleanup
+
+Deleting a Claude Code session in the desktop app removes only the app's record;
+the transcript, tool results, scratchpad, edit history and worktree stay behind.
+Bootstrap links `claude-sweep` into `~/.local/bin`; the LaunchAgent is opt-in:
+
+```sh
+claude-sweep                    # Preview what would be cleaned and what is held back
+claude-sweep --apply            # Clean now
+claude-sweep install --apply    # LaunchAgent: run on every deletion, and daily
+claude-sweep doctor             # LaunchAgent state, recent log, held-back sessions
+claude-sweep uninstall --apply
+```
+
+- Only sessions with the app's `deleted_<id>` marker and no remaining record are
+  swept; archived sessions are never touched. A session whose transcript is still
+  open, or that was deleted under 30 seconds ago, waits for the next pass.
+- A worktree under `.claude/worktrees/` is removed with its `claude/*` branch only
+  when it has no uncommitted or untracked changes and no commits that another
+  branch, tag or remote lacks. Otherwise it is held back and listed by doctor.
+- Everything is moved to `~/.local/state/claude-sweep/trash/<date>/<id>/` and
+  purged after 7 days; a removed branch's last commit is in
+  `~/Library/Logs/claude-sweep.log`. Each ID is processed once (`done` ledger).
+- `install` watches the account folders that exist at the time. When doctor reports
+  `UNWATCHED` (a new account), run `uninstall --apply`, then `install --apply`.
+
 ## 1Password and GitHub
 
 In 1Password Settings → Developer, enable CLI integration and the SSH Agent.

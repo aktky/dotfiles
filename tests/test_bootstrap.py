@@ -44,6 +44,9 @@ class BootstrapTests(unittest.TestCase):
         switch = self.target / ".local/bin/codex-switch"
         self.assertEqual(switch.resolve(), self.repo / "scripts/codex-switch")
         self.assertTrue(os.access(switch, os.X_OK))
+        sweep = self.target / ".local/bin/claude-sweep"
+        self.assertEqual(sweep.resolve(), self.repo / "scripts/claude-sweep")
+        self.assertFalse((self.target / "Library").exists())  # No LaunchAgent from bootstrap.
         bindir = self.base / "blocked-bin"
         bindir.mkdir()
         calls = self.base / "unexpected-commands"

@@ -1,0 +1,277 @@
+#!/bin/bash
+# Opt-in local LLM stack: llama.cpp (llama-server) behind llama-swap.
+# Every command that changes something previews unless --apply is given.
+set -euo pipefail
+self="$0"
+# Installed as an absolute symlink in ~/.local/bin; find the repo through it.
+if [[ -L "$self" ]]; then self="$(readlink "$self")"; fi
+source "$(dirname "$self")/common.sh"
+
+llm_dir="$repo_root/config/llm"
+label=local.llm.llama-swap
+listen=127.0.0.1:8080
+
+usage() {
+  cat <<EOF
+Usage: $0 <command> [options]
+  install [--apply] [--links-only] [--target-home DIR]
+                     Install config/llm/Brewfile, link configs, write the LaunchAgent
+  pull [--apply] [NAME ...]
+                     Download models listed in config/llm/models.tsv
+  start | stop | status
+                     Control the llama-swap LaunchAgent (listens on $listen)
+  bench NAME [--apply]
+                     Run llama-bench on a downloaded model and keep the result
+  doctor [--links-only] [--target-home DIR]
+                     Check links, LaunchAgent, tools, models and memory limit
+EOF
+}
+
+llm_links() {
+  printf '%s\n' 'config/llm/env|.config/llm/env' \
+    'config/llm/llama-swap.yaml|.config/llama-swap/config.yaml' \
+    'scripts/llmctl|.local/bin/llmctl'
+}
+
+# name|repo|include|size for each manifest entry.
+model_rows() {
+  local name repo include size
+  while IFS=$'\t' read -r name repo include size; do
+    [[ -z "$name" || "$name" == \#* ]] && continue
+    printf '%s|%s|%s|%s\n' "$name" "$repo" "$include" "$size"
+  done < "$llm_dir/models.tsv"
+}
+
+has_model() {
+  local row
+  while IFS= read -r row; do [[ "${row%%|*}" == "$1" ]] && return 0; done < <(model_rows)
+  return 1
+}
+
+llm_home() { printf '%s\n' "$target_home/.local/share/llm"; }
+plist_path() { printf '%s\n' "$target_home/Library/LaunchAgents/$label.plist"; }
+
+brew_prefix() {
+  if find_brew; then (cd "$(dirname "$brew_bin")/.." && pwd -P); else echo /opt/homebrew; fi
+}
+
+render_plist() {
+  local prefix
+  prefix="$(brew_prefix)"
+  sed -e "s|@HOME@|$target_home|g" -e "s|@BREW_PREFIX@|$prefix|g" \
+    -e "s|@LISTEN@|$listen|g" "$llm_dir/launchd/llama-swap.plist.in"
+}
+
+parse_home_opts() {
+  apply=false; links_only=false; custom_home=false; strict=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --apply) apply=true; shift ;;
+      --links-only) links_only=true; shift ;;
+      --target-home) [[ $# -ge 2 ]] || { usage; exit 2; }; target_home="$2"; custom_home=true; shift 2 ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  done
+  if $custom_home && ! $links_only; then
+    echo '--target-home requires --links-only (Homebrew is machine-wide).' >&2; exit 2
+  fi
+  normalize_target
+}
+
+cmd_install() {
+  parse_home_opts "$@"
+  local conflicts=0 src rel dest plist rendered
+  while IFS='|' read -r src rel; do
+    dest="$target_home/$rel"
+    if ! check_parent "$dest"; then conflicts=1; continue; fi
+    if [[ -L "$dest" && "$(readlink "$dest")" == "$repo_root/$src" ]]; then
+      printf 'OK link: %s\n' "$dest"
+    elif [[ -e "$dest" || -L "$dest" ]]; then
+      printf 'CONFLICT: %s (back up and move it explicitly first)\n' "$dest" >&2; conflicts=1
+    else
+      printf 'LINK: %s -> %s\n' "$dest" "$repo_root/$src"
+    fi
+  done < <(llm_links)
+  plist="$(plist_path)"
+  rendered="$(render_plist)"
+  if ! check_parent "$plist"; then conflicts=1
+  elif [[ -L "$plist" ]] || { [[ -e "$plist" ]] && [[ "$(cat "$plist")" != "$rendered" ]]; }; then
+    printf 'CONFLICT: %s differs (run stop, then move it explicitly)\n' "$plist" >&2; conflicts=1
+  elif [[ -e "$plist" ]]; then
+    printf 'OK LaunchAgent: %s\n' "$plist"
+  else
+    printf 'WRITE LaunchAgent: %s (starts llama-swap at login)\n' "$plist"
+  fi
+  [[ "$conflicts" == 0 ]] || { echo 'Stopped before making any changes.' >&2; exit 1; }
+  printf 'DIRS: %s/{models,hf,bench}, %s/Library/Logs/llm\n' "$(llm_home)" "$target_home"
+  if ! $links_only; then
+    printf 'PACKAGES: brew bundle install --no-upgrade --file=%s/Brewfile\n' "$llm_dir"
+    printf 'TIME MACHINE: tmutil addexclusion %s\n' "$(llm_home)"
+  fi
+  if ! $apply; then echo 'Preview only. Use --apply to install and link.'; exit 0; fi
+  if ! $links_only; then
+    [[ "$(uname -s)" == Darwin ]] || { echo 'Package installation is macOS-only.' >&2; exit 2; }
+    find_brew || { echo 'Install Homebrew from https://brew.sh, then rerun.' >&2; exit 1; }
+    HOMEBREW_NO_AUTO_UPDATE=1 "$brew_bin" bundle install --no-upgrade --file="$llm_dir/Brewfile"
+  fi
+  while IFS='|' read -r src rel; do
+    dest="$target_home/$rel"
+    if [[ -L "$dest" && "$(readlink "$dest")" == "$repo_root/$src" ]]; then continue; fi
+    mkdir -p "$(dirname "$dest")"
+    ln -s "$repo_root/$src" "$dest"
+  done < <(llm_links)
+  mkdir -p "$(llm_home)/models" "$(llm_home)/hf" "$(llm_home)/bench" \
+    "$target_home/Library/Logs/llm" "$(dirname "$plist")"
+  [[ -e "$plist" ]] || printf '%s\n' "$rendered" > "$plist"
+  if ! $links_only; then tmutil addexclusion "$(llm_home)"; fi
+  echo 'Applied. Open a new login shell, run llmctl pull, then llmctl start.'
+}
+
+cmd_pull() {
+  local apply=false names="" name repo include size found any=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --apply) apply=true; shift ;;
+      -*) usage >&2; exit 2 ;;
+      *) names="$names $1"; shift ;;
+    esac
+  done
+  for name in $names; do
+    has_model "$name" || { echo "Unknown model: $name (see config/llm/models.tsv)" >&2; exit 2; }
+  done
+  : "${LLM_HOME:?Run llmctl install --apply and open a new login shell}"
+  while IFS='|' read -r name repo include size; do
+    if [[ -n "$names" ]]; then
+      found=false
+      for want in $names; do [[ "$want" == "$name" ]] && found=true; done
+      $found || continue
+    fi
+    any=true
+    printf 'PULL %s (~%s GB): hf download %s --include %s --local-dir %s/models/%s\n' \
+      "$name" "$size" "$repo" "$include" "$LLM_HOME" "$name"
+    if $apply; then
+      hf download "$repo" --include "$include" --local-dir "$LLM_HOME/models/$name"
+    fi
+  done < <(model_rows)
+  $any || { echo 'No models listed.' >&2; exit 1; }
+  $apply || echo 'Preview only. Use --apply to download.'
+}
+
+cmd_service() {
+  local domain plist
+  domain="gui/$(id -u)"
+  plist="$(plist_path)"
+  case "$1" in
+    start)
+      [[ -f "$plist" ]] || { echo 'No LaunchAgent; run llmctl install --apply first.' >&2; exit 1; }
+      if launchctl print "$domain/$label" >/dev/null 2>&1; then
+        launchctl kickstart -k "$domain/$label"
+      else
+        launchctl bootstrap "$domain" "$plist"
+      fi
+      echo "llama-swap: http://$listen (UI at /ui, OpenAI API at /v1)" ;;
+    stop)
+      launchctl bootout "$domain/$label" 2>/dev/null || echo 'llama-swap is not loaded.' ;;
+    status)
+      if launchctl print "$domain/$label" 2>/dev/null | grep -E $'^\t(state|pid) ='; then
+        curl -fsS --max-time 3 "http://$listen/running" || echo 'API not answering yet.'
+        echo
+      else
+        echo 'llama-swap is not loaded.'
+      fi ;;
+  esac
+}
+
+cmd_bench() {
+  local name="" apply=false file out
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --apply) apply=true; shift ;;
+      -*) usage >&2; exit 2 ;;
+      *) [[ -z "$name" ]] || { usage >&2; exit 2; }; name="$1"; shift ;;
+    esac
+  done
+  [[ -n "$name" ]] || { usage >&2; exit 2; }
+  : "${LLM_HOME:?Run llmctl install --apply and open a new login shell}"
+  # First shard (or the single file), skipping multimodal projectors.
+  file="$(find "$LLM_HOME/models/$name" -name '*.gguf' ! -name 'mmproj*' ! -path '*/MTP/*' 2>/dev/null \
+    | LC_ALL=C sort | head -n 1)"
+  [[ -n "$file" ]] || { echo "Not downloaded: $name (llmctl pull --apply $name)" >&2; exit 1; }
+  out="$LLM_HOME/bench/$(date +%Y%m%d-%H%M%S)-$name.md"
+  printf 'BENCH: llama-bench -m %s -p 512,4096 -n 128 -o md > %s\n' "$file" "$out"
+  echo 'Stop llama-swap first (llmctl stop) so the two do not compete for memory.'
+  $apply || { echo 'Preview only. Use --apply to run.'; exit 0; }
+  {
+    printf '# %s\n\n- date: %s\n- host: %s\n- llama.cpp: %s\n- wired_limit_mb: %s\n\n' \
+      "$name" "$(date '+%Y-%m-%d %H:%M:%S')" "$(sysctl -n machdep.cpu.brand_string 2>/dev/null || uname -m)" \
+      "$(llama-bench --version 2>&1 | head -n 1)" "$(sysctl -n iogpu.wired_limit_mb 2>/dev/null || echo unknown)"
+    llama-bench -m "$file" -p 512,4096 -n 128 -o md
+  } | tee "$out"
+}
+
+cmd_doctor() {
+  parse_home_opts "$@"
+  local status=0 src rel dest name repo include size dir yaml plist limit mem_mb
+  while IFS='|' read -r src rel; do
+    dest="$target_home/$rel"
+    if [[ -L "$dest" && "$(readlink "$dest")" == "$repo_root/$src" && -e "$dest" ]]; then
+      printf 'OK link: %s\n' "$rel"
+    else
+      printf 'MISSING/DIFFERENT link: %s\n' "$rel"; status=1
+    fi
+  done < <(llm_links)
+  plist="$(plist_path)"
+  if [[ -f "$plist" && ! -L "$plist" && "$(cat "$plist")" == "$(render_plist)" ]]; then
+    echo 'OK LaunchAgent'
+  else
+    echo 'MISSING/DIFFERENT LaunchAgent: rerun install (stop and move a changed one first)'; status=1
+  fi
+  yaml="$llm_dir/llama-swap.yaml"
+  while IFS='|' read -r name repo include size; do
+    grep -q "\${models}/$name/" "$yaml" || { echo "NOT ROUTED: $name is in models.tsv but not llama-swap.yaml"; status=1; }
+  done < <(model_rows)
+  for name in $(grep -o '\${models}/[^/]*/' "$yaml" | sed -e 's|^\${models}/||' -e 's|/$||' | sort -u); do
+    has_model "$name" || { echo "NOT IN MANIFEST: $name is routed but not in models.tsv"; status=1; }
+  done
+  if $links_only; then exit "$status"; fi
+
+  for tool in llama-server llama-swap hf; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      printf 'PATH %s: %s\n' "$tool" "$(command -v "$tool")"
+    else
+      printf 'MISSING on PATH: %s\n' "$tool"; status=1
+    fi
+  done
+  if command -v llama-server >/dev/null 2>&1; then
+    printf 'llama.cpp: %s\n' "$(llama-server --version 2>&1 | grep -m1 version || echo unknown)"
+  fi
+  dir="$(llm_home)/models"
+  while IFS='|' read -r name repo include size; do
+    if find "$dir/$name" -name '*.gguf' 2>/dev/null | grep -q .; then
+      printf 'OK model: %s\n' "$name"
+    else
+      printf 'NOT DOWNLOADED: %s (~%s GB; llmctl pull --apply %s)\n' "$name" "$size" "$name"
+    fi
+  done < <(model_rows)
+  limit="$(sysctl -n iogpu.wired_limit_mb 2>/dev/null || echo 0)"
+  mem_mb=$(( $(sysctl -n hw.memsize) / 1048576 ))
+  if [[ "$limit" == 0 ]]; then
+    printf 'GPU wired limit: macOS default (about 75%% of %s MB). For the large MoE run:\n' "$mem_mb"
+    printf '  sudo sysctl iogpu.wired_limit_mb=%s   # resets on reboot\n' $(( mem_mb - 16384 ))
+  else
+    printf 'GPU wired limit: %s MB of %s MB\n' "$limit" "$mem_mb"
+  fi
+  exit "$status"
+}
+
+[[ $# -gt 0 ]] || { usage >&2; exit 2; }
+command="$1"; shift
+case "$command" in
+  install) cmd_install "$@" ;;
+  pull) cmd_pull "$@" ;;
+  start|stop|status) [[ $# == 0 ]] || { usage >&2; exit 2; }; cmd_service "$command" ;;
+  bench) cmd_bench "$@" ;;
+  doctor) cmd_doctor "$@" ;;
+  -h|--help|help) usage ;;
+  *) usage >&2; exit 2 ;;
+esac

@@ -1,0 +1,4 @@
+# Local LLM paths, shared by login shells and scripts/llmctl.
+# Weights, caches, logs and benchmarks stay outside the repository.
+export LLM_HOME="$HOME/.local/share/llm"
+export HF_HOME="$LLM_HOME/hf"

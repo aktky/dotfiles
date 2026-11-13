@@ -102,6 +102,39 @@ For secrets, use `op signin` and `op run --env-file=.env.1password.local -- <com
 in the same shell; the ignored env file contains `op://` references.
 Desktop integration uses your account permissions, not per-project restrictions.
 
+## Local LLM stack (opt-in)
+
+For Macs with enough unified memory. `llama-swap` serves every local model from one
+OpenAI-compatible endpoint at `http://127.0.0.1:8080` and starts `llama-server`
+(llama.cpp) for the requested model on demand. Shared `bootstrap` never installs it.
+
+```sh
+./scripts/llmctl install            # Preview
+brew trust --formula mostlygeek/llama-swap/llama-swap  # Third-party tap; once per Mac
+./scripts/llmctl install --apply    # config/llm/Brewfile, links, LaunchAgent
+exec zsh -l                         # Loads ~/.config/llm/env (LLM_HOME, HF_HOME)
+llmctl pull qwen3.8-27b             # Preview the download and its size
+llmctl pull --apply qwen3.8-27b
+llmctl start                        # Then open http://127.0.0.1:8080/ui
+llmctl doctor
+```
+
+- Declarations live here: `config/llm/models.tsv` (what to download) and
+  `config/llm/llama-swap.yaml` (how to serve it). Keep model names the same in
+  both; `llmctl doctor` reports drift. Requests never trigger downloads.
+- State stays outside the repo in `~/.local/share/llm` (`models/`, `hf/`,
+  `bench/`, excluded from Time Machine) and `~/Library/Logs/llm`.
+- `install` writes `~/Library/LaunchAgents/local.llm.llama-swap.plist`, which starts
+  llama-swap at login. llama-swap reloads its config when the linked file changes.
+  To change the template, run `llmctl stop`, move the old plist away, and reinstall.
+- The large MoE needs more GPU memory than the macOS default (about 75% of RAM).
+  `llmctl doctor` prints the `sudo sysctl iogpu.wired_limit_mb=...` command;
+  the setting resets on reboot and is left to you.
+- `llmctl bench --apply NAME` records `llama-bench` results with the llama.cpp
+  version under `~/.local/share/llm/bench`. Stop llama-swap first.
+- The server listens on localhost only and has no API key. Add keys through
+  1Password before exposing it to other devices.
+
 ## Check changes
 
 ```sh

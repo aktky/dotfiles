@@ -1,0 +1,5 @@
+# Local LLM stack (opt-in): installed by scripts/llmctl install --apply.
+tap "mostlygeek/llama-swap"
+brew "llama.cpp"
+brew "mostlygeek/llama-swap/llama-swap"
+brew "hf"

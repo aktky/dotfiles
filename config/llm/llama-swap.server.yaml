@@ -9,7 +9,9 @@
 healthCheckTimeout: 600
 logLevel: info
 startPort: 10001
-# No globalTTL: the daily model stays loaded.
+# A safety net, not a schedule: any model idle for a week unloads, and the
+# next request loads it again. Startup still preloads qwen3.8-27b.
+globalTTL: 604800
 # No routing block: llama-swap runs one model at a time, so a request for another
 # model unloads the current one. Each fits the ~40 GB Metal working set of a
 # 48 GB Mac alone. Requesting qwen3.8-27b again reloads it in about 10 seconds.

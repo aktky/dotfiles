@@ -241,6 +241,19 @@ class LlmctlTests(unittest.TestCase):
         [report] = (self.target / ".local/share/llm/bench").iterdir()
         self.assertIn("- llama.cpp: version: 0.9.0 (build 12110)\n", report.read_text())
 
+    def test_stop_waits_until_launchd_removes_the_service(self):
+        # launchd keeps listing the service for a moment after bootout returns.
+        stub = self.bindir / "launchctl"
+        stub.write_text('#!/bin/bash\necho "launchctl $1" >> "$DOTFILES_TEST_LOG"\n'
+                        'if [[ "$1" == print ]]; then\n'
+                        '  n=$(grep -c "^launchctl print" "$DOTFILES_TEST_LOG")\n'
+                        '  [[ $n -lt 3 ]]\nfi\n')
+        stub.chmod(0o755)
+        result = self.llmctl("stop", home=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.log.read_text().splitlines(),
+                         ["launchctl bootout"] + ["launchctl print"] * 3)
+
     def tailscale_stub(self, serving):
         stub = self.bindir / "tailscale"
         status = "|-- / proxy http://127.0.0.1:8080" if serving else "No serve config"

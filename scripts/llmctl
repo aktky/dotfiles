@@ -190,6 +190,7 @@ cmd_install() {
 
 cmd_pull() {
   local apply=false names="" name repo include size format sub found any=false installed yaml=""
+  local pattern patterns includes
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --apply) apply=true; shift ;;
@@ -216,10 +217,14 @@ cmd_pull() {
     fi
     any=true
     sub="$(format_dir "$format")" || { echo "Bad format for $name: $format (gguf or mlx)" >&2; exit 2; }
-    printf 'PULL %s (%s, ~%s GB): hf download %s --include %s --local-dir %s/%s/%s\n' \
-      "$name" "$format" "$size" "$repo" "$include" "$LLM_HOME" "$sub" "$name"
+    # The include column holds space-separated patterns; hf takes one per --include.
+    read -r -a patterns <<< "$include"
+    includes=()
+    for pattern in "${patterns[@]}"; do includes+=(--include "$pattern"); done
+    printf 'PULL %s (%s, ~%s GB): hf download %s %s --local-dir %s/%s/%s\n' \
+      "$name" "$format" "$size" "$repo" "${includes[*]}" "$LLM_HOME" "$sub" "$name"
     if $apply; then
-      hf download "$repo" --include "$include" --local-dir "$LLM_HOME/$sub/$name"
+      hf download "$repo" "${includes[@]}" --local-dir "$LLM_HOME/$sub/$name"
     fi
   done < <(model_rows)
   $any || { echo 'No models listed.' >&2; exit 1; }

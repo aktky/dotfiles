@@ -115,6 +115,7 @@ class LlmctlTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.log.read_text().splitlines(), [
             "hf download unsloth/Qwen3.8-27B-GGUF --include Qwen3.8-27B-UD-Q4_K_XL.gguf "
+            "--include mmproj-F16.gguf --include MTP/* "
             "--local-dir " + str(self.target / ".local/share/llm/models/qwen3.8-27b")])
         self.log.unlink()
         result = self.llmctl("pull", "--apply", "gemma-4-26b-a4b", home=False)
@@ -196,8 +197,10 @@ class LlmctlTests(unittest.TestCase):
         result = subprocess.run([str(self.repo / "scripts/llmctl"), "pull"], env=env,
                                 text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("PULL qwen3.8-27b", result.stdout)
+        self.assertIn("PULL qwen3.8-27b ", result.stdout)
+        self.assertIn("PULL flint ", result.stdout)
         self.assertNotIn("flash-next", result.stdout)
+        self.assertNotIn("-mlx", result.stdout)
 
     def test_serve_requires_server_profile_and_previews(self):
         self.tailscale_stub(serving=False)

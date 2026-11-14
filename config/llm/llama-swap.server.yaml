@@ -1,14 +1,18 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/mostlygeek/llama-swap/refs/heads/main/config-schema.json
 # Server profile: linked to ~/.config/llama-swap/config.yaml by
 # scripts/llmctl install --profile server --apply.
-# An always-on daily model for other devices on the tailnet; research models
-# stay on the workstation profile (llama-swap.yaml).
+# An always-on daily model for other devices on the tailnet, plus models that
+# swap in one at a time; research models stay on the workstation profile
+# (llama-swap.yaml).
 # Download weights with scripts/llmctl pull; this file never triggers downloads.
 
 healthCheckTimeout: 600
 logLevel: info
 startPort: 10001
 # No globalTTL: the daily model stays loaded.
+# No routing block: llama-swap runs one model at a time, so a request for another
+# model unloads the current one. Each fits the ~40 GB Metal working set of a
+# 48 GB Mac alone. Requesting qwen3.8-27b again reloads it in about 10 seconds.
 
 hooks:
   on_startup:
@@ -24,8 +28,46 @@ macros:
 models:
   qwen3.8-27b:
     name: "Qwen3.8 27B (UD-Q4_K_XL)"
-    description: "Dense daily model, about 18 GB of weights"
+    description: "Dense daily model with vision and MTP drafting, about 20 GB"
     cmd: |
       ${llama-server}
       --model ${models}/qwen3.8-27b/Qwen3.8-27B-UD-Q4_K_XL.gguf
+      --mmproj ${models}/qwen3.8-27b/mmproj-F16.gguf
+      --spec-type draft-mtp
+      --spec-draft-model ${models}/qwen3.8-27b/MTP/mtp-Qwen3.8-27B-Q4_0.gguf
+      --ctx-size 65536
+
+  gemma-4-26b-a4b-gguf:
+    name: "Gemma 4 26B-A4B (UD-Q4_K_XL)"
+    description: "Fast MoE with vision, about 18 GB"
+    cmd: |
+      ${llama-server}
+      --model ${models}/gemma-4-26b-a4b-gguf/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf
+      --mmproj ${models}/gemma-4-26b-a4b-gguf/mmproj-F16.gguf
+      --ctx-size 65536
+
+  flint:
+    name: "Recursive Flint 40B-A2.5B (UD-Q4_K_XL)"
+    description: "Coding-agent MoE, about 25 GB"
+    cmd: |
+      ${llama-server}
+      --model ${models}/flint/flint-UD-Q4_K_XL.gguf
+      --ctx-size 65536
+
+  nemotron-3.5-bolt-e4b:
+    name: "NVIDIA Nemotron 3.5 Bolt E4B (UD-Q6_K_XL)"
+    description: "Small fast model with vision, about 8 GB"
+    cmd: |
+      ${llama-server}
+      --model ${models}/nemotron-3.5-bolt-e4b/NVIDIA-Nemotron-3.5-Bolt-E4B-UD-Q6_K_XL.gguf
+      --mmproj ${models}/nemotron-3.5-bolt-e4b/mmproj-F16.gguf
+      --ctx-size 32768
+
+  qwen3.8-27b-abliterated:
+    name: "Qwen3.8 27B abliterated (huihui-ai, UD-Q4_K_XL)"
+    description: "Refusal-removed 27B with vision, about 18 GB; may code worse than the original"
+    cmd: |
+      ${llama-server}
+      --model ${models}/qwen3.8-27b-abliterated/Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf
+      --mmproj ${models}/qwen3.8-27b-abliterated/mmproj-model-bf16.gguf
       --ctx-size 65536

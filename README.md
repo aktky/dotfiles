@@ -145,8 +145,17 @@ exec zsh -l                         # Loads ~/.config/llm/env (LLM_HOME, HF_HOME
 llmctl pull qwen3.8-27b             # Preview the download and its size
 llmctl pull --apply qwen3.8-27b
 llmctl start                        # Then open http://127.0.0.1:8080/ui
+llmctl stop
+llmctl smoke                        # Start, ask qwen3.8-27b one question, stop again
 llmctl doctor
 ```
+
+On the workstation llama-swap runs only between `llmctl start` and `llmctl stop`,
+never at login: it is a backup for the inference server and a place for
+experiments, not a resident service. Register it in clients as its own endpoint
+(`http://127.0.0.1:8080/v1`) next to the server's URL; model IDs match the
+server's, so the same names work on either. Run `llmctl smoke` after upgrading
+llama.cpp, or now and then, so the backup is known to work before it is needed.
 
 - Declarations live here: `config/llm/models.tsv` (what to download, with
   space-separated include patterns for extra files such as a vision projector,
@@ -160,9 +169,13 @@ llmctl doctor
 - State stays outside the repo in `~/.local/share/llm` (`models/` GGUF, `mlx/`,
   `omlx/` per-model oMLX settings and SSD KV cache, `hf/`, `bench/`; excluded from
   Time Machine) and `~/Library/Logs/llm`.
-- `install` writes `~/Library/LaunchAgents/local.llm.llama-swap.plist`, which starts
-  llama-swap at login. llama-swap reloads its config when the linked file changes.
-  To change the template, run `llmctl stop`, move the old plist away, and reinstall.
+- `install` writes the LaunchAgent plist. The workstation keeps it at
+  `~/.local/share/llm/launchd/local.llm.llama-swap.plist`, which launchd never loads
+  on its own; `llmctl start` loads it and restarts llama-swap if it crashes until
+  `llmctl stop`. The server profile writes it to `~/Library/LaunchAgents` to start at
+  login. Reinstalling a workstation removes the login copy earlier versions wrote.
+  llama-swap reloads its config when the linked file changes. To change the
+  template, run `llmctl stop`, move the old plist away, and reinstall.
 - The large MoE needs more GPU memory than the macOS default (Metal's recommended
   working set, about 107 GB on a 128 GB Mac).
   `llmctl doctor` prints the `sudo sysctl iogpu.wired_limit_mb=...` command;

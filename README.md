@@ -161,7 +161,9 @@ llama.cpp, or now and then, so the backup is known to work before it is needed.
   space-separated include patterns for extra files such as a vision projector,
   and whether it is `gguf` or `mlx`) and `config/llm/llama-swap.yaml` (how to serve it). Use
   the same names in both; `llmctl doctor` reports drift. Requests never trigger
-  downloads.
+  downloads. `config/llm/templates` (linked to `~/.config/llm/templates`) holds
+  chat templates that replace outdated ones embedded in a GGUF; after pulling a
+  change that adds this link, rerun `llmctl install --apply`.
 - llama-swap alone decides what stays loaded. Each model declares the GPU memory
   it needs (`capacities.gpu`, GB) against a 96 GB pool, and llama-swap unloads
   others until the requested model fits. oMLX runs one model per process, each

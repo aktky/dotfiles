@@ -120,11 +120,15 @@ models:
 
   qwen3.8-27b-abliterated:
     name: "Qwen3.8 27B abliterated (huihui-ai, GGUF UD-Q4_K_XL)"
-    description: "Refusal-removed 27B with vision on llama-server, about 18 GB"
+    description: "Refusal-removed 27B with vision and MTP drafting on llama-server, about 18 GB"
     capacities:
       gpu: 24
+    # Abliteration barely moves the weights, so the original 27B's MTP head
+    # (pulled with qwen3.8-27b) drafts well; outputs match decoding without it.
     cmd: |
       ${llama-server}
       --model ${models}/qwen3.8-27b-abliterated/Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf
       --mmproj ${models}/qwen3.8-27b-abliterated/mmproj-model-bf16.gguf
+      --spec-type draft-mtp
+      --spec-draft-model ${models}/qwen3.8-27b/MTP/mtp-Qwen3.8-27B-Q4_0.gguf
       --ctx-size 65536

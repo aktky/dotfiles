@@ -142,9 +142,13 @@ models:
     # (pulled with gemma-4-26b-a4b-gguf) handles images.
     # Its GGUF embeds Gemma 4's launch template, which keeps calling tools in
     # agent loops; Google's current template (linked by llmctl install) does not.
+    # It can also think without end (once 16,384 tokens, the client's limit), so
+    # thinking stops at 8,192 tokens; ordinary and agent turns stay well under it.
     cmd: |
       ${llama-server}
       --model ${models}/gemma-4-26b-a4b-heretic/gemma-4-26B-A4B-it-ultra-uncensored-heretic.i1-Q4_K_M.gguf
       --mmproj ${models}/gemma-4-26b-a4b-gguf/mmproj-F16.gguf
       --chat-template-file ${env.HOME}/.config/llm/templates/gemma-4-it.jinja
+      --reasoning-budget 8192
+      --reasoning-budget-message "Time is up for thinking. Answer now with what you have."
       --ctx-size 65536

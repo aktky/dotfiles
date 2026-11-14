@@ -77,3 +77,14 @@ models:
       --spec-type draft-mtp
       --spec-draft-model ${models}/qwen3.8-27b/MTP/mtp-Qwen3.8-27B-Q4_0.gguf
       --ctx-size 65536
+
+  gemma-4-26b-a4b-heretic:
+    name: "Gemma 4 26B-A4B ultra-uncensored heretic (i1-Q4_K_M)"
+    description: "Refusal-removed fast MoE with vision, about 17 GB; thinks at length before answering"
+    # Heretic edits only the text weights, so the original Gemma projector
+    # (pulled with gemma-4-26b-a4b-gguf) handles images.
+    cmd: |
+      ${llama-server}
+      --model ${models}/gemma-4-26b-a4b-heretic/gemma-4-26B-A4B-it-ultra-uncensored-heretic.i1-Q4_K_M.gguf
+      --mmproj ${models}/gemma-4-26b-a4b-gguf/mmproj-F16.gguf
+      --ctx-size 65536

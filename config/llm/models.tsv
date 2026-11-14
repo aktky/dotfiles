@@ -11,3 +11,4 @@ gemma-4-26b-a4b-gguf	unsloth/gemma-4-26B-A4B-it-GGUF	gemma-4-26B-A4B-it-UD-Q4_K_
 flint	unsloth/flint-GGUF	flint-UD-Q4_K_XL.gguf	25.1	gguf
 nemotron-3.5-bolt-e4b	unsloth/NVIDIA-Nemotron-3.5-Bolt-E4B-GGUF	NVIDIA-Nemotron-3.5-Bolt-E4B-UD-Q6_K_XL.gguf mmproj-F16.gguf	8.2	gguf
 qwen3.8-27b-abliterated	huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF	Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf mmproj-model-bf16.gguf	18.3	gguf
+gemma-4-26b-a4b-heretic	mradermacher/gemma-4-26B-A4B-it-ultra-uncensored-heretic-i1-GGUF	gemma-4-26B-A4B-it-ultra-uncensored-heretic.i1-Q4_K_M.gguf	16.8	gguf

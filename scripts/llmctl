@@ -60,6 +60,7 @@ detect_profile() {
 llm_links() {
   printf '%s\n' 'config/llm/env|.config/llm/env' \
     "config/llm/$(profile_yaml "$profile")|.config/llama-swap/config.yaml" \
+    'config/llm/templates|.config/llm/templates' \
     'scripts/llmctl|.local/bin/llmctl'
 }
 

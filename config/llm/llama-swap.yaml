@@ -140,8 +140,11 @@ models:
       gpu: 24
     # Heretic edits only the text weights, so the original Gemma projector
     # (pulled with gemma-4-26b-a4b-gguf) handles images.
+    # Its GGUF embeds Gemma 4's launch template, which keeps calling tools in
+    # agent loops; Google's current template (linked by llmctl install) does not.
     cmd: |
       ${llama-server}
       --model ${models}/gemma-4-26b-a4b-heretic/gemma-4-26B-A4B-it-ultra-uncensored-heretic.i1-Q4_K_M.gguf
       --mmproj ${models}/gemma-4-26b-a4b-gguf/mmproj-F16.gguf
+      --chat-template-file ${env.HOME}/.config/llm/templates/gemma-4-it.jinja
       --ctx-size 65536

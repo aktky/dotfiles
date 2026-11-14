@@ -36,7 +36,95 @@ class LlmctlTests(unittest.TestCase):
                               env=self.env, text=True, capture_output=True)
 
     def plist(self):
+        """Workstation plist: kept out of ~/Library/LaunchAgents so it never runs at login."""
+        return self.target / ".local/share/llm/launchd/local.llm.llama-swap.plist"
+
+    def login_plist(self):
         return self.target / "Library/LaunchAgents/local.llm.llama-swap.plist"
+
+    def test_only_the_server_starts_at_login(self):
+        self.assertEqual(self.llmctl("install", "--apply").returncode, 0)
+        self.assertTrue(self.plist().is_file())
+        self.assertFalse(self.login_plist().exists())
+        other = self.base / "server home"
+        other.mkdir()
+        result = subprocess.run(
+            [str(self.repo / "scripts/llmctl"), "install", "--profile", "server", "--apply",
+             "--links-only", "--target-home", str(other)],
+            env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((other / "Library/LaunchAgents/local.llm.llama-swap.plist").is_file())
+        self.assertFalse((other / ".local/share/llm/launchd").exists())
+
+    def test_old_login_agent_is_moved_off_login(self):
+        self.assertEqual(self.llmctl("install", "--apply").returncode, 0)
+        self.login_plist().parent.mkdir(parents=True)
+        shutil.copy(self.plist(), self.login_plist())  # What earlier installs wrote.
+        result = self.llmctl("doctor")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("STALE login LaunchAgent", result.stdout)
+        self.assertIn("REMOVE login LaunchAgent", self.llmctl("install").stdout)
+        self.assertTrue(self.login_plist().exists())  # Preview keeps it.
+        result = self.llmctl("install", "--apply")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.login_plist().exists())
+        self.assertEqual(self.llmctl("doctor").returncode, 0)
+        self.assertFalse(self.log.exists())  # A custom home never touches launchd.
+
+    def test_foreign_login_agent_blocks_install(self):
+        self.login_plist().parent.mkdir(parents=True)
+        self.login_plist().write_text("someone else's agent")
+        result = self.llmctl("install", "--apply")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.login_plist().read_text(), "someone else's agent")
+        self.assertFalse(self.plist().exists())
+
+    def test_doctor_flags_a_model_missing_files_its_config_loads(self):
+        self.assertEqual(self.llmctl("install", "--apply").returncode, 0)
+        model = self.target / ".local/share/llm/models/qwen3.8-27b"
+        model.mkdir(parents=True)
+        (model / "Qwen3.8-27B-UD-Q4_K_XL.gguf").write_text("")
+        env = dict(self.env, HOME=str(self.target))  # Full doctor checks the real home.
+        doctor = [str(self.repo / "scripts/llmctl"), "doctor"]
+        result = subprocess.run(doctor, env=env, text=True, capture_output=True)
+        self.assertIn("INCOMPLETE: qwen3.8-27b lacks MTP/mtp-Qwen3.8-27B-Q4_0.gguf mmproj-F16.gguf",
+                      result.stdout)
+        (model / "mmproj-F16.gguf").write_text("")
+        (model / "MTP").mkdir()
+        (model / "MTP/mtp-Qwen3.8-27B-Q4_0.gguf").write_text("")
+        result = subprocess.run(doctor, env=env, text=True, capture_output=True)
+        self.assertIn("OK model: qwen3.8-27b (gguf)", result.stdout)
+
+    def smoke(self, reply, *args):
+        self.assertEqual(self.llmctl("install", "--apply").returncode, 0)
+        (self.bindir / "launchctl").write_text(
+            '#!/bin/bash\necho "launchctl $1" >> "$DOTFILES_TEST_LOG"\n'
+            '[[ "$1" == print ]] && exit 1\nexit 0\n')
+        (self.bindir / "curl").write_text(
+            '#!/bin/bash\ncase "$*" in *chat/completions*) printf %%s %s ;; esac\n' % repr(reply))
+        (self.bindir / "curl").chmod(0o755)
+        (self.bindir / "sleep").write_text("#!/bin/bash\n")
+        (self.bindir / "sleep").chmod(0o755)
+        env = dict(self.env, HOME=str(self.target))
+        return subprocess.run([str(self.repo / "scripts/llmctl"), "smoke", *args],
+                              env=env, text=True, capture_output=True)
+
+    def test_smoke_starts_checks_and_stops_again(self):
+        result = self.smoke('{"choices":[{"message":{"content":"ready"}}],"usage":{"completion_tokens":2}}')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("OK: ready", result.stdout)
+        calls = [line for line in self.log.read_text().splitlines() if line.startswith("launchctl")]
+        self.assertIn("launchctl bootstrap", calls)
+        # Stopped again: bootout after the start (stop then polls print until it is gone).
+        self.assertGreater(len(calls) - 1 - calls[::-1].index("launchctl bootout"),
+                           calls.index("launchctl bootstrap"))
+
+    def test_smoke_fails_on_an_empty_answer_and_still_stops(self):
+        result = self.smoke('{"choices":[{"message":{"content":""}}]}', "flint")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FAILED: flint", result.stderr)
+        calls = self.log.read_text().splitlines()
+        self.assertIn("launchctl bootout", calls[calls.index("launchctl bootstrap"):])
 
     def test_install_preview_never_writes(self):
         result = self.llmctl("install")

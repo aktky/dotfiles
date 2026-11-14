@@ -10,6 +10,7 @@ source "$(dirname "$self")/common.sh"
 llm_dir="$repo_root/config/llm"
 label=local.llm.llama-swap
 listen=127.0.0.1:8080
+smoke_model=qwen3.8-27b
 
 usage() {
   cat <<EOF
@@ -21,14 +22,18 @@ Usage: $0 <command> [options]
                      (without names: the models the installed profile serves)
   start | stop | status
                      Control the llama-swap LaunchAgent (listens on $listen)
+  smoke [NAME] [--keep]
+                     Start llama-swap if needed, ask NAME (default $smoke_model) one
+                     question, check the answer, and stop it again unless it was running
   serve [--off] [--apply]
                      Server profile: publish llama-swap to the tailnet with Tailscale Serve
   bench NAME [--apply]
                      Run llama-bench on a downloaded GGUF model and keep the result
   doctor [--profile workstation|server] [--links-only] [--target-home DIR]
                      Check links, LaunchAgent, tools, models and memory limit
-Profiles: workstation (default) links llama-swap.yaml; server links
-llama-swap.server.yaml. Later commands detect the profile from that link.
+Profiles: workstation (default) links llama-swap.yaml and starts llama-swap only
+on llmctl start; server links llama-swap.server.yaml and starts it at login.
+Later commands detect the profile from that link.
 EOF
 }
 
@@ -104,7 +109,17 @@ has_model() {
 }
 
 llm_home() { printf '%s\n' "$target_home/.local/share/llm"; }
-plist_path() { printf '%s\n' "$target_home/Library/LaunchAgents/$label.plist"; }
+# The server starts llama-swap at login from ~/Library/LaunchAgents. The
+# workstation keeps its plist under LLM_HOME, which launchd never loads on its
+# own, so llama-swap runs only between llmctl start and stop.
+login_plist() { printf '%s\n' "$target_home/Library/LaunchAgents/$label.plist"; }
+ondemand_plist() { printf '%s\n' "$(llm_home)/launchd/$label.plist"; }
+plist_path() {
+  case "${profile:-$(detect_profile)}" in
+    server) login_plist ;;
+    *) ondemand_plist ;;
+  esac
+}
 
 brew_prefix() {
   if find_brew; then (cd "$(dirname "$brew_bin")/.." && pwd -P); else echo /opt/homebrew; fi
@@ -139,7 +154,7 @@ parse_home_opts() {
 
 cmd_install() {
   parse_home_opts "$@"
-  local conflicts=0 src rel dest plist rendered
+  local conflicts=0 src rel dest plist rendered stale=""
   printf 'PROFILE: %s (config/llm/%s)\n' "$profile" "$(profile_yaml "$profile")"
   while IFS='|' read -r src rel; do
     dest="$target_home/$rel"
@@ -159,8 +174,20 @@ cmd_install() {
     printf 'CONFLICT: %s differs (run stop, then move it explicitly)\n' "$plist" >&2; conflicts=1
   elif [[ -e "$plist" ]]; then
     printf 'OK LaunchAgent: %s\n' "$plist"
-  else
+  elif [[ "$profile" == server ]]; then
     printf 'WRITE LaunchAgent: %s (starts llama-swap at login)\n' "$plist"
+  else
+    printf 'WRITE LaunchAgent: %s (llama-swap runs only after llmctl start)\n' "$plist"
+  fi
+  # Earlier installs started the workstation at login; move that agent aside.
+  if [[ "$profile" != server && ( -e "$(login_plist)" || -L "$(login_plist)" ) ]]; then
+    if [[ ! -L "$(login_plist)" && "$(cat "$(login_plist)")" == "$rendered" ]]; then
+      stale="$(login_plist)"
+      printf 'REMOVE login LaunchAgent: %s (stops llama-swap now if it runs)\n' "$stale"
+    else
+      printf 'CONFLICT: %s is not this stack'"'"'s LaunchAgent (move it explicitly first)\n' "$(login_plist)" >&2
+      conflicts=1
+    fi
   fi
   [[ "$conflicts" == 0 ]] || { echo 'Stopped before making any changes.' >&2; exit 1; }
   printf 'DIRS: %s/{models,mlx,omlx,hf,bench}, %s/Library/Logs/llm\n' "$(llm_home)" "$target_home"
@@ -183,9 +210,14 @@ cmd_install() {
   mkdir -p "$(llm_home)/models" "$(llm_home)/mlx" "$(llm_home)/omlx" "$(llm_home)/hf" "$(llm_home)/bench" \
     "$target_home/Library/Logs/llm" "$(dirname "$plist")"
   [[ -e "$plist" ]] || printf '%s\n' "$rendered" > "$plist"
+  if [[ -n "$stale" ]]; then
+    if ! $custom_home; then launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true; fi
+    rm -f "$stale"
+  fi
   if ! $links_only; then tmutil addexclusion "$(llm_home)"; fi
   echo 'Applied. Open a new login shell, run llmctl pull, then llmctl start.'
-  if [[ "$profile" == server ]]; then echo 'Then publish it to the tailnet with llmctl serve.'; fi
+  if [[ "$profile" == server ]]; then echo 'Then publish it to the tailnet with llmctl serve.'
+  else echo 'llama-swap no longer starts at login; llmctl smoke checks it still works.'; fi
 }
 
 cmd_pull() {
@@ -323,7 +355,7 @@ cmd_bench() {
 
 cmd_doctor() {
   parse_home_opts "$@"
-  local status=0 src rel dest name repo include size format sub limit mem_mb found routed
+  local status=0 src rel dest name repo include size format sub limit mem_mb found routed missing ref
   while IFS='|' read -r src rel; do
     dest="$target_home/$rel"
     if [[ -L "$dest" && "$(readlink "$dest")" == "$repo_root/$src" && -e "$dest" ]]; then
@@ -337,6 +369,9 @@ cmd_doctor() {
     echo 'OK LaunchAgent'
   else
     echo 'MISSING/DIFFERENT LaunchAgent: rerun install (stop and move a changed one first)'; status=1
+  fi
+  if [[ "$profile" != server && ( -e "$(login_plist)" || -L "$(login_plist)" ) ]]; then
+    echo 'STALE login LaunchAgent: the workstation would start at login; rerun install --apply'; status=1
   fi
   printf 'PROFILE: %s\n' "$profile"
   # The workstation config serves every manifest model; the server one a subset.
@@ -373,7 +408,16 @@ cmd_doctor() {
     if { [[ "$format" == gguf ]] && [[ -n "$(find "$(llm_home)/$sub/$name" -name '*.gguf' -print -quit 2>/dev/null)" ]]; } ||
        { [[ "$format" == mlx ]] && [[ -f "$(llm_home)/$sub/$name/config.json" ]] &&
          [[ -n "$(find "$(llm_home)/$sub/$name" -name '*.safetensors' -print -quit 2>/dev/null)" ]]; }; then
-      printf 'OK model: %s (%s)\n' "$name" "$format"
+      missing=""
+      # Extra files the config loads (vision projector, MTP draft) must exist too.
+      for ref in $(grep -o "\${models}/$name/[^[:space:]]*" "$yaml" | LC_ALL=C sort -u); do
+        [[ -e "$(llm_home)/$sub/${ref#\$\{models\}/}" ]] || missing="$missing ${ref#\$\{models\}/$name/}"
+      done
+      if [[ -n "$missing" ]]; then
+        printf 'INCOMPLETE: %s lacks%s (llmctl pull --apply %s)\n' "$name" "$missing" "$name"
+      else
+        printf 'OK model: %s (%s)\n' "$name" "$format"
+      fi
     else
       printf 'NOT DOWNLOADED: %s (~%s GB; llmctl pull --apply %s)\n' "$name" "$size" "$name"
     fi
@@ -400,6 +444,39 @@ cmd_doctor() {
   exit "$status"
 }
 
+# Rarely used backups break silently (a new llama.cpp flag, a missing file), so
+# prove the endpoint answers and leave the service as it was found.
+cmd_smoke() {
+  local name="$smoke_model" keep=false was_running=false domain body reply ok=false i
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --keep) keep=true; shift ;;
+      -*) usage >&2; exit 2 ;;
+      *) name="$1"; shift ;;
+    esac
+  done
+  domain="gui/$(id -u)"
+  if launchctl print "$domain/$label" 2>/dev/null | grep -q $'^\tstate = running'; then was_running=true; fi
+  $was_running || cmd_service start
+  for i in $(seq 1 30); do
+    curl -fsS --max-time 2 "http://$listen/v1/models" >/dev/null 2>&1 && break
+    sleep 1
+  done
+  body="$(printf '{"model":"%s","messages":[{"role":"user","content":"Reply with the single word: ready"}],"max_tokens":400}' "$name")"
+  printf 'SMOKE %s: first request loads the model, which can take a minute\n' "$name"
+  if reply="$(curl -fsS --max-time 900 "http://$listen/v1/chat/completions" \
+      -H 'Content-Type: application/json' -d "$body")" &&
+     printf '%s' "$reply" | jq -e '(.choices[0].message.content // "") + (.choices[0].message.reasoning_content // "") | length > 0' >/dev/null; then
+    ok=true
+    printf '%s' "$reply" | jq -r '"OK: \(.choices[0].message.content // "" | gsub("\\s+"; " ") | .[0:80])  (\(.usage.completion_tokens // "?") tokens, \(.timings.predicted_per_second // .usage.generation_tokens_per_second // "?" | tostring | .[0:5]) tok/s)"'
+  else
+    echo "FAILED: $name did not answer. Last llama-swap log lines:" >&2
+    tail -n 20 "$target_home/Library/Logs/llm/llama-swap.log" >&2 2>/dev/null || true
+  fi
+  if ! $was_running && ! $keep; then cmd_service stop; echo 'Stopped llama-swap again.'; fi
+  $ok
+}
+
 [[ $# -gt 0 ]] || { usage >&2; exit 2; }
 command="$1"; shift
 case "$command" in
@@ -408,6 +485,7 @@ case "$command" in
   start|stop|status) [[ $# == 0 ]] || { usage >&2; exit 2; }; cmd_service "$command" ;;
   serve) cmd_serve "$@" ;;
   bench) cmd_bench "$@" ;;
+  smoke) cmd_smoke "$@" ;;
   doctor) cmd_doctor "$@" ;;
   -h|--help|help) usage ;;
   *) usage >&2; exit 2 ;;

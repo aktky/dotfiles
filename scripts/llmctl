@@ -402,7 +402,7 @@ cmd_doctor() {
          [[ -n "$(find "$(llm_home)/$sub/$name" -name '*.safetensors' -print -quit 2>/dev/null)" ]]; }; then
       missing=""
       # Extra files the config loads (vision projector, MTP draft) must exist too.
-      for ref in $(grep -o "\${models}/$name/[^[:space:]]*" "$yaml" | sort -u); do
+      for ref in $(grep -o "\${models}/$name/[^[:space:]]*" "$yaml" | LC_ALL=C sort -u); do
         [[ -e "$(llm_home)/$sub/${ref#\$\{models\}/}" ]] || missing="$missing ${ref#\$\{models\}/$name/}"
       done
       if [[ -n "$missing" ]]; then

@@ -115,13 +115,16 @@ class LlmctlTests(unittest.TestCase):
         self.assertIn("OK: ready", result.stdout)
         calls = [line for line in self.log.read_text().splitlines() if line.startswith("launchctl")]
         self.assertIn("launchctl bootstrap", calls)
-        self.assertEqual(calls[-1], "launchctl bootout")
+        # Stopped again: bootout after the start (stop then polls print until it is gone).
+        self.assertGreater(len(calls) - 1 - calls[::-1].index("launchctl bootout"),
+                           calls.index("launchctl bootstrap"))
 
     def test_smoke_fails_on_an_empty_answer_and_still_stops(self):
         result = self.smoke('{"choices":[{"message":{"content":""}}]}', "flint")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("FAILED: flint", result.stderr)
-        self.assertTrue(self.log.read_text().splitlines()[-1].startswith("launchctl bootout"))
+        calls = self.log.read_text().splitlines()
+        self.assertIn("launchctl bootout", calls[calls.index("launchctl bootstrap"):])
 
     def test_install_preview_never_writes(self):
         result = self.llmctl("install")

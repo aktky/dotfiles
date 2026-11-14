@@ -148,8 +148,9 @@ llmctl start                        # Then open http://127.0.0.1:8080/ui
 llmctl doctor
 ```
 
-- Declarations live here: `config/llm/models.tsv` (what to download, and whether
-  it is `gguf` or `mlx`) and `config/llm/llama-swap.yaml` (how to serve it). Use
+- Declarations live here: `config/llm/models.tsv` (what to download, with
+  space-separated include patterns for extra files such as a vision projector,
+  and whether it is `gguf` or `mlx`) and `config/llm/llama-swap.yaml` (how to serve it). Use
   the same names in both; `llmctl doctor` reports drift. Requests never trigger
   downloads.
 - llama-swap alone decides what stays loaded. Each model declares the GPU memory
@@ -175,8 +176,10 @@ llmctl doctor
 
 A second Mac can run the daily model for every device on the tailnet, while the
 workstation keeps the large MoE and research. The server profile links
-`config/llm/llama-swap.server.yaml` instead: only the daily model, preloaded at
-startup and never unloaded. Later `llmctl` commands detect the profile from that
+`config/llm/llama-swap.server.yaml` instead: the daily model, preloaded at
+startup, plus GGUF models that fit a 48 GB Mac alone. llama-swap runs one at a
+time there, so requesting another model unloads the current one until the daily
+model is requested again. Later `llmctl` commands detect the profile from that
 link, and `pull` without names fetches only the models the profile serves.
 Apply the shared `bootstrap` on the server too. `config/llm/Brewfile` is shared,
 so run the tap trust and Metal Toolchain steps above before installing.
@@ -204,7 +207,8 @@ Set these on the server by hand, once:
 
 - Energy: `sudo pmset -c sleep 0 disksleep 0 womp 1 autorestart 1`. A MacBook
   still sleeps when its lid closes without an external display, so leave the lid
-  open.
+  open. MacBooks ignore `autorestart` (it is missing from `pmset -g cap`); their
+  battery rides out short outages instead.
 - Automatic login for the server's user: the LaunchAgent starts only in a logged-in
   session. That requires FileVault off. If you keep FileVault on, use
   `sudo fdesetup authrestart` for planned restarts and unlock by hand after a

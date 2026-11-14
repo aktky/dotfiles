@@ -1,8 +1,13 @@
 # Models that scripts/llmctl pull downloads.
-# Columns (tab-separated): name, Hugging Face repo, --include pattern, approx size GB, format.
+# Columns (tab-separated): name, Hugging Face repo, --include patterns (space-separated),
+# approx size GB, format.
 # format gguf -> $LLM_HOME/models/<name>/ (llama-server); mlx -> $LLM_HOME/mlx/<name>/ (oMLX).
 # <name> is also the model ID in llama-swap.yaml; llmctl doctor checks both lists match.
-qwen3.8-27b	unsloth/Qwen3.8-27B-GGUF	Qwen3.8-27B-UD-Q4_K_XL.gguf	17.6	gguf
+qwen3.8-27b	unsloth/Qwen3.8-27B-GGUF	Qwen3.8-27B-UD-Q4_K_XL.gguf mmproj-F16.gguf MTP/*	19.9	gguf
 qwen3.8-flash-next	unsloth/Qwen3.8-Flash-Next-GGUF	UD-IQ3_XXS/*	83.6	gguf
 qwen3.8-27b-mlx	mlx-community/Qwen3.8-27B-4bit	*	16.0	mlx
 gemma-4-26b-a4b	mlx-community/gemma-4-26b-a4b-it-8bit	*	27.9	mlx
+gemma-4-26b-a4b-gguf	unsloth/gemma-4-26B-A4B-it-GGUF	gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf mmproj-F16.gguf	18.2	gguf
+flint	unsloth/flint-GGUF	flint-UD-Q4_K_XL.gguf	25.1	gguf
+nemotron-3.5-bolt-e4b	unsloth/NVIDIA-Nemotron-3.5-Bolt-E4B-GGUF	NVIDIA-Nemotron-3.5-Bolt-E4B-UD-Q6_K_XL.gguf mmproj-F16.gguf	8.2	gguf
+qwen3.8-27b-abliterated	huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF	Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf mmproj-model-bf16.gguf	18.3	gguf

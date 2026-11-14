@@ -41,12 +41,15 @@ macros:
 models:
   qwen3.8-27b:
     name: "Qwen3.8 27B (GGUF UD-Q4_K_XL)"
-    description: "Dense model on llama-server, about 18 GB of weights"
+    description: "Dense model on llama-server with vision and MTP drafting, about 20 GB"
     capacities:
-      gpu: 24
+      gpu: 26
     cmd: |
       ${llama-server}
       --model ${models}/qwen3.8-27b/Qwen3.8-27B-UD-Q4_K_XL.gguf
+      --mmproj ${models}/qwen3.8-27b/mmproj-F16.gguf
+      --spec-type draft-mtp
+      --spec-draft-model ${models}/qwen3.8-27b/MTP/mtp-Qwen3.8-27B-Q4_0.gguf
       --ctx-size 65536
 
   qwen3.8-flash-next:
@@ -82,3 +85,46 @@ models:
       --base-path ${env.LLM_HOME}/omlx/gemma-4-26b-a4b
       --paged-ssd-cache-dir ${env.LLM_HOME}/omlx/gemma-4-26b-a4b/cache
       --memory-guard-gb 36
+
+  gemma-4-26b-a4b-gguf:
+    name: "Gemma 4 26B-A4B (GGUF UD-Q4_K_XL)"
+    description: "Fast MoE with vision on llama-server, about 18 GB"
+    capacities:
+      gpu: 24
+    cmd: |
+      ${llama-server}
+      --model ${models}/gemma-4-26b-a4b-gguf/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf
+      --mmproj ${models}/gemma-4-26b-a4b-gguf/mmproj-F16.gguf
+      --ctx-size 65536
+
+  flint:
+    name: "Recursive Flint 40B-A2.5B (GGUF UD-Q4_K_XL)"
+    description: "Coding-agent MoE on llama-server, about 25 GB"
+    capacities:
+      gpu: 30
+    cmd: |
+      ${llama-server}
+      --model ${models}/flint/flint-UD-Q4_K_XL.gguf
+      --ctx-size 65536
+
+  nemotron-3.5-bolt-e4b:
+    name: "NVIDIA Nemotron 3.5 Bolt E4B (GGUF UD-Q6_K_XL)"
+    description: "Small fast model with vision on llama-server, about 8 GB"
+    capacities:
+      gpu: 11
+    cmd: |
+      ${llama-server}
+      --model ${models}/nemotron-3.5-bolt-e4b/NVIDIA-Nemotron-3.5-Bolt-E4B-UD-Q6_K_XL.gguf
+      --mmproj ${models}/nemotron-3.5-bolt-e4b/mmproj-F16.gguf
+      --ctx-size 32768
+
+  qwen3.8-27b-abliterated:
+    name: "Qwen3.8 27B abliterated (huihui-ai, GGUF UD-Q4_K_XL)"
+    description: "Refusal-removed 27B with vision on llama-server, about 18 GB"
+    capacities:
+      gpu: 24
+    cmd: |
+      ${llama-server}
+      --model ${models}/qwen3.8-27b-abliterated/Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL.gguf
+      --mmproj ${models}/qwen3.8-27b-abliterated/mmproj-model-bf16.gguf
+      --ctx-size 65536

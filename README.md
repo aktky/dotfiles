@@ -18,11 +18,16 @@ separate worktree for review. To undo, remove only this repo's links and restore
 
 - Shared tools: edit `Brewfile`, preview, apply, then run doctor.
 - AI CLIs: `./scripts/install-ai` previews; `./scripts/install-ai --apply` installs
-  Claude, Codex, Grok and Cursor through their official installers. Pass names to
-  select a subset. Sign in through each CLI; credentials stay outside this repo.
-- Updates: `claude update`, `grok update`, `cursor-agent update`; for Codex,
-  rerun `./scripts/install-ai --apply codex`. Keep vendor auto-updates enabled.
+  Claude, Codex, Grok, Cursor and Antigravity (`agy`) through their official
+  installers. Pass names to select a subset. Sign in through each CLI;
+  credentials stay outside this repo.
+- Updates: `claude update`, `grok update`, `cursor-agent update`; `agy`
+  self-updates; for Codex, rerun `./scripts/install-ai --apply codex`. Keep
+  vendor auto-updates enabled.
   Use `grok` and `cursor-agent`, not the ambiguous `agent` command.
+- The Antigravity installer runs `agy install` to configure the shell. `~/.zshrc`
+  and `~/.zprofile` link into this repo, so `install-ai` warns if any installer
+  changes tracked files; review and revert unwanted edits.
 - Project runtimes and dependencies: keep declarations and lockfiles in that project.
   For Python, `uv` is managed in `Brewfile`. Use `uv python install <version>`
   for the runtime specified by the project, then sync its committed lockfile.

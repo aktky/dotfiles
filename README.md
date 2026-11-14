@@ -179,7 +179,7 @@ workstation keeps the large MoE and research. The server profile links
 `config/llm/llama-swap.server.yaml` instead: the daily model, preloaded at
 startup, plus GGUF models that fit a 48 GB Mac alone. llama-swap runs one at a
 time there, so requesting another model unloads the current one until the daily
-model is requested again. Later `llmctl` commands detect the profile from that
+model is requested again. Any model idle for a week unloads (`globalTTL`). Later `llmctl` commands detect the profile from that
 link, and `pull` without names fetches only the models the profile serves.
 Apply the shared `bootstrap` on the server too. `config/llm/Brewfile` is shared,
 so run the tap trust and Metal Toolchain steps above before installing.

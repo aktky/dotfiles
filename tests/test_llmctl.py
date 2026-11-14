@@ -139,6 +139,22 @@ class LlmctlTests(unittest.TestCase):
         self.assertIn("MLX", result.stderr)
         self.assertFalse(self.log.exists())
 
+    def test_bench_header_records_llama_cpp_version(self):
+        # llama-bench logs backend loading before its version line.
+        stub = self.bindir / "llama-bench"
+        stub.write_text('#!/bin/bash\nif [[ "$1" == --version ]]; then\n'
+                        '  echo "load_backend: loaded BLAS backend" >&2\n'
+                        '  echo "version: 0.9.0 (build 12110)" >&2\nelse echo "| t/s |"; fi\n')
+        stub.chmod(0o755)
+        model = self.target / ".local/share/llm/models/qwen3.8-27b"
+        model.mkdir(parents=True)
+        (model / "Qwen3.8-27B-UD-Q4_K_XL.gguf").write_text("")
+        (self.target / ".local/share/llm/bench").mkdir(parents=True)
+        result = self.llmctl("bench", "--apply", "qwen3.8-27b", home=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        [report] = (self.target / ".local/share/llm/bench").iterdir()
+        self.assertIn("- llama.cpp: version: 0.9.0 (build 12110)\n", report.read_text())
+
     def tailscale_stub(self, serving):
         stub = self.bindir / "tailscale"
         status = "|-- / proxy http://127.0.0.1:8080" if serving else "No serve config"

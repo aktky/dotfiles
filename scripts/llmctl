@@ -303,7 +303,7 @@ cmd_bench() {
   {
     printf '# %s\n\n- date: %s\n- host: %s\n- llama.cpp: %s\n- wired_limit_mb: %s\n\n' \
       "$name" "$(date '+%Y-%m-%d %H:%M:%S')" "$(sysctl -n machdep.cpu.brand_string 2>/dev/null || uname -m)" \
-      "$(llama-bench --version 2>&1 | head -n 1)" "$(sysctl -n iogpu.wired_limit_mb 2>/dev/null || echo unknown)"
+      "$(llama-bench --version 2>&1 | grep -m1 version || echo unknown)" "$(sysctl -n iogpu.wired_limit_mb 2>/dev/null || echo unknown)"
     llama-bench -m "$file" -p 512,4096 -n 128 -o md
   } | tee "$out"
 }

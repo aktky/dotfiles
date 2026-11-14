@@ -1,12 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 apply=false
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 if [[ "${1:-}" == --apply ]]; then apply=true; shift; fi
-if [[ $# == 0 ]]; then set -- claude codex grok cursor; fi
+if [[ $# == 0 ]]; then set -- claude codex grok cursor agy; fi
 for tool in "$@"; do
   case "$tool" in
-    claude|codex|grok|cursor) ;;
-    *) echo "Usage: $0 [--apply] [claude|codex|grok|cursor ...]" >&2; exit 2 ;;
+    claude|codex|grok|cursor|agy) ;;
+    *) echo "Usage: $0 [--apply] [claude|codex|grok|cursor|agy ...]" >&2; exit 2 ;;
   esac
 done
 installer=""
@@ -18,14 +19,19 @@ for tool in "$@"; do
     codex) url=https://chatgpt.com/codex/install.sh; shell=/bin/sh ;;
     grok) url=https://x.ai/cli/install.sh ;;
     cursor) url=https://cursor.com/install ;;
+    agy) url=https://antigravity.google/cli/install.sh ;;
   esac
   printf '%s: %s\n' "$tool" "$url"
   if ! $apply; then continue; fi
+  repo_state="$(git -C "$repo_root" status --porcelain 2>/dev/null || true)"
   installer="$(mktemp)"
   curl -fsSL "$url" -o "$installer"
   # Use a predictable PATH; dotfiles owns shell setup, including Grok's PATH.
   PATH="$HOME/.local/bin:$HOME/.grok/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" SHELL=/bin/sh "$shell" "$installer" </dev/null
   rm -f "$installer"
   installer=""
+  if [[ "$(git -C "$repo_root" status --porcelain 2>/dev/null || true)" != "$repo_state" ]]; then
+    echo "WARNING: $tool installer changed files in $repo_root; review git diff." >&2
+  fi
 done
 if ! $apply; then echo 'Preview only. Use --apply to install.'; fi
